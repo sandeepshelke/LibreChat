@@ -1,6 +1,7 @@
 import { AIMessage, HumanMessage, ToolMessage } from '@librechat/agents/langchain/messages';
 import type { MessageContentComplex } from '@librechat/agents';
-import { tagRunToolCallResponses } from './rounds';
+import { logger } from '@librechat/data-schemas';
+import { tagRunToolCallResponses, hasToolCallPart } from './rounds';
 
 const toolPart = (id: string, response_index?: number): MessageContentComplex =>
   ({
@@ -60,5 +61,34 @@ describe('tagRunToolCallResponses', () => {
     const parts = [toolPart('x', 1), toolPart('y', 3), toolPart('b'), toolPart('c')];
     tagRunToolCallResponses(parts, { getRunMessages: () => runMessages() });
     expect(tags(parts)).toEqual([1, 3, 7, 7]);
+  });
+
+  it('does not read run messages when the answer has no tool calls', () => {
+    const graph = { getRunMessages: jest.fn(() => runMessages()) };
+    const parts = [{ type: 'text', text: 'hi' }] as MessageContentComplex[];
+    expect(tagRunToolCallResponses(parts, graph)).toBe(0);
+    expect(tagRunToolCallResponses([], graph)).toBe(0);
+    expect(graph.getRunMessages).not.toHaveBeenCalled();
+  });
+
+  it('logs only safe metadata when the graph throws', () => {
+    const warn = jest.spyOn(logger, 'warn').mockImplementation();
+    const secret = 'prompt text sk-secret-123';
+    const graph = {
+      getRunMessages: () => {
+        throw new Error(secret);
+      },
+    };
+    expect(tagRunToolCallResponses([toolPart('a')], graph)).toBe(0);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+    warn.mockRestore();
+  });
+
+  it('detects tool call parts', () => {
+    expect(hasToolCallPart(undefined)).toBe(false);
+    expect(hasToolCallPart([undefined, { type: 'text', text: 'x' } as MessageContentComplex])).toBe(
+      false,
+    );
+    expect(hasToolCallPart([toolPart('a')])).toBe(true);
   });
 });

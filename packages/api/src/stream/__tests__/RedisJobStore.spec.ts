@@ -730,6 +730,38 @@ describe('RedisJobStore', () => {
     );
   });
 
+  test('reads run messages only from the graph of the requested creation epoch', () => {
+    const redis = { isCluster: true, eval: jest.fn() } as unknown as Cluster;
+    const store = new RedisJobStore(redis);
+    const replacementMessages = [{ id: 'replacement' }];
+    const replacementGraph = { getRunMessages: jest.fn(() => replacementMessages) };
+    const staleGraph = { getRunMessages: jest.fn(() => [{ id: 'predecessor' }]) };
+
+    store.setGraph('stream-run-messages', replacementGraph as never, 101);
+    store.setGraph('stream-run-messages', staleGraph as never, 100);
+
+    expect(store.getRunMessages('stream-run-messages', 101)).toBe(replacementMessages);
+    expect(store.getRunMessages('stream-run-messages', 100)).toBeUndefined();
+    expect(store.getRunMessages('stream-run-messages', 999)).toBeUndefined();
+    expect(store.getRunMessages('unknown-stream', 101)).toBeUndefined();
+    expect(staleGraph.getRunMessages).not.toHaveBeenCalled();
+  });
+
+  test('skips run messages of a disposed graph and drops it from the local cache', () => {
+    const redis = { isCluster: true, eval: jest.fn() } as unknown as Cluster;
+    const store = new RedisJobStore(redis);
+    const graph = {
+      getRunMessages: jest.fn(() => {
+        throw new TypeError('disposed');
+      }),
+    };
+    store.setGraph('stream-run-messages-disposed', graph as never, 101);
+
+    expect(store.getRunMessages('stream-run-messages-disposed', 101)).toBeUndefined();
+    expect(store.getRunMessages('stream-run-messages-disposed', 101)).toBeUndefined();
+    expect(graph.getRunMessages).toHaveBeenCalledTimes(1);
+  });
+
   test('guards local content caches by creation epoch', async () => {
     const evalRedis = jest.fn().mockResolvedValue(false);
     const redis = {

@@ -50,6 +50,7 @@ import { retainedScheduleReceipt } from '~/stream/internal/scheduleReceipts';
 import { createCheckpointNamespace } from '~/stream/checkpoints';
 import { retainScheduleMCPFailure } from '../scheduleFailure';
 import { toPendingSteer } from '~/stream/SteeringLifecycle';
+import { getSafeErrorMetadata } from '~/utils/errors';
 
 /** Recovery window for parked steers (mirrors Redis's completed-job TTL). */
 export const PARKED_STEERS_TTL_MS: number = 5 * 60 * 1000;
@@ -1621,7 +1622,11 @@ export class InMemoryJobStore implements IJobStoreV2 {
     }
     try {
       return graph.getRunMessages();
-    } catch {
+    } catch (error) {
+      logger.warn(
+        `[InMemoryJobStore] Run messages unavailable for ${streamId}; skipping`,
+        getSafeErrorMetadata(error),
+      );
       return undefined;
     }
   }

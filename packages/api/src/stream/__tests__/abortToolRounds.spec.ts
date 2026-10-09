@@ -94,3 +94,48 @@ describe('abortJob tool call response tags', () => {
     await manager.destroy();
   });
 });
+
+describe('InMemoryJobStore.getRunMessages', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  const makeStore = async () => {
+    const { InMemoryJobStore } = await import('../implementations/InMemoryJobStore');
+    return new InMemoryJobStore();
+  };
+
+  it('returns run messages only for the requested creation epoch', async () => {
+    const store = await makeStore();
+    const job = await store.createJob('run-messages', 'user-1');
+    const messages = runMessages();
+    store.setGraph('run-messages', { getRunMessages: () => messages } as never, job.createdAt);
+
+    expect(store.getRunMessages('run-messages', job.createdAt)).toBe(messages);
+    expect(store.getRunMessages('run-messages', job.createdAt + 1)).toBeUndefined();
+    expect(store.getRunMessages('missing-stream')).toBeUndefined();
+    await store.destroy();
+  });
+
+  it('skips a failing graph and logs safe metadata only', async () => {
+    const store = await makeStore();
+    // Earlier tests reset the module registry; spy on the logger the store module holds.
+    const { logger } = await import('@librechat/data-schemas');
+    const warn = jest.spyOn(logger, 'warn').mockImplementation();
+    const job = await store.createJob('run-messages-failing', 'user-1');
+    const secret = 'user prompt text sk-secret-123';
+    const graph = {
+      getRunMessages: () => {
+        throw new TypeError(secret);
+      },
+    };
+    store.setGraph('run-messages-failing', graph as never, job.createdAt);
+
+    expect(store.getRunMessages('run-messages-failing', job.createdAt)).toBeUndefined();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+    expect((warn.mock.calls[0] as unknown[])[1]).toEqual({ type: expect.any(String) });
+    await store.destroy();
+  });
+});

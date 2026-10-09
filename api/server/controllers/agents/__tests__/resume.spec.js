@@ -318,6 +318,19 @@ function makeClient(overrides = {}) {
   };
 }
 
+function makeRunGraph() {
+  const { AIMessage, HumanMessage, ToolMessage } = require('@librechat/agents/langchain/messages');
+  return {
+    getRunMessages: jest.fn(() => [
+      new HumanMessage('question'),
+      new AIMessage({ content: '', tool_calls: [{ id: 'tc1', name: 'lookup', args: {} }] }),
+      new ToolMessage({ tool_call_id: 'tc1', content: 'out-1' }),
+      new AIMessage({ content: '', tool_calls: [{ id: 'tc2', name: 'lookup', args: {} }] }),
+      new ToolMessage({ tool_call_id: 'tc2', content: 'out-2' }),
+    ]),
+  };
+}
+
 function makeToolCallContent(overrides = {}) {
   return {
     type: 'tool_call',
@@ -4473,6 +4486,116 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
         }),
       );
       expect(mockGenerationJobManager.publishTerminalClaim).not.toHaveBeenCalled();
+    });
+
+    it("tags the finalized answer's tool calls with their model response", async () => {
+      const graph = makeRunGraph();
+      mockGenerationJobManager.getJob.mockResolvedValue(makeToolApprovalJob());
+      mockInitializeClient.mockResolvedValue({
+        client: makeClient({
+          run: { Graph: graph },
+          contentParts: [
+            makeToolCallContent({ id: 'tc1', output: 'out-1' }),
+            makeToolCallContent({ id: 'tc2', output: 'out-2' }),
+            { type: 'text', text: 'Done' },
+          ],
+        }),
+        userMCPAuthMap: {},
+      });
+
+      await post(approveBody());
+      await settled;
+      await flush();
+
+      const saved = mockSaveMessage.mock.calls[0][1];
+      expect(saved.content.map((p) => p.response_index)).toEqual([1, 3, undefined]);
+      expect(saved.content[0].tool_call).not.toHaveProperty('response_index');
+    });
+
+    it('does not read run messages when the finalized answer has no tool calls', async () => {
+      const graph = makeRunGraph();
+      mockGenerationJobManager.getJob.mockResolvedValue(makeToolApprovalJob());
+      mockInitializeClient.mockResolvedValue({
+        client: makeClient({ run: { Graph: graph } }),
+        userMCPAuthMap: {},
+      });
+
+      await post(approveBody());
+      await settled;
+      await flush();
+
+      expect(graph.getRunMessages).not.toHaveBeenCalled();
+    });
+
+    it('saves untagged content when the graph is disposed', async () => {
+      const graph = {
+        getRunMessages: jest.fn(() => {
+          throw new TypeError('disposed');
+        }),
+      };
+      mockGenerationJobManager.getJob.mockResolvedValue(makeToolApprovalJob());
+      mockInitializeClient.mockResolvedValue({
+        client: makeClient({
+          run: { Graph: graph },
+          contentParts: [makeToolCallContent({ id: 'tc1', output: 'out-1' })],
+        }),
+        userMCPAuthMap: {},
+      });
+
+      await post(approveBody());
+      await settled;
+      await flush();
+
+      expect(mockSaveMessage.mock.calls[0][1].content[0]).not.toHaveProperty('response_index');
+    });
+
+    it("re-pause: tags the persisted segment's tool calls with their model response", async () => {
+      const graph = makeRunGraph();
+      mockGenerationJobManager.getJob.mockResolvedValue(makeToolApprovalJob());
+      mockInitializeClient.mockResolvedValue({
+        client: makeClient({
+          run: { Graph: graph },
+          pendingApproval: { actionId: NEXT_ACTION_ID },
+          contentParts: [
+            makeToolCallContent({ id: 'tc1', output: 'out-1' }),
+            makeToolCallContent({ id: 'tc2', output: 'out-2' }),
+          ],
+        }),
+        userMCPAuthMap: {},
+      });
+
+      await post(approveBody());
+      await settled;
+      await flush();
+
+      expect(mockSaveMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ unfinished: true }),
+        expect.objectContaining({
+          context: 'api/server/controllers/agents/resume.js - re-pause progress persist',
+        }),
+      );
+      const saved = mockSaveMessage.mock.calls.find(([, m]) => m.unfinished === true)[1];
+      expect(saved.content.map((p) => p.response_index)).toEqual([1, 3]);
+    });
+
+    it('re-pause: persists without reading run messages when the segment has no tool calls', async () => {
+      const graph = makeRunGraph();
+      mockGenerationJobManager.getJob.mockResolvedValue(makeToolApprovalJob());
+      mockInitializeClient.mockResolvedValue({
+        client: makeClient({
+          run: { Graph: graph },
+          pendingApproval: { actionId: NEXT_ACTION_ID },
+          contentParts: [{ type: 'text', text: 'streamed' }],
+        }),
+        userMCPAuthMap: {},
+      });
+
+      await post(approveBody());
+      await settled;
+      await flush();
+
+      expect(graph.getRunMessages).not.toHaveBeenCalled();
     });
 
     it('re-pause: preserves HITL response provenance on the unfinished row', async () => {

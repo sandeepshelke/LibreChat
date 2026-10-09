@@ -94,6 +94,7 @@ import {
 import { filterPersistableAbortContent } from './abortContent';
 import { toClientPendingAction } from '~/agents/hitl/policy';
 import { markAbortedCompactionContent } from '~/agents/compaction';
+import { hasToolCallPart } from '~/agents/rounds';
 import { ApprovalLifecycle, pausePersistenceActionId } from './ApprovalLifecycle';
 import { projectPendingMCPOAuthPrompts } from '~/mcp/oauth/resume';
 import { sanitizeJobMetadata } from './metadata';
@@ -4872,10 +4873,12 @@ class GenerationJobManagerClass {
         const committed = await this.jobStore.getContentParts(streamId, jobData.createdAt);
         if (committed) {
           content = committed.content;
-          tagToolCallResponses(
-            content,
-            this.jobStore.getRunMessages?.(streamId, jobData.createdAt),
-          );
+          if (hasToolCallPart(content)) {
+            tagToolCallResponses(
+              content,
+              this.jobStore.getRunMessages?.(streamId, jobData.createdAt),
+            );
+          }
         }
       } catch (contentError) {
         logger.warn(
