@@ -1,4 +1,5 @@
 import { logger } from '@librechat/data-schemas';
+import type { BaseMessage } from '@librechat/agents/langchain/messages';
 import type { StandardGraph } from '@librechat/agents';
 import type { Agents } from 'librechat-data-provider';
 import type {
@@ -1608,6 +1609,21 @@ export class InMemoryJobStore implements IJobStoreV2 {
     }
     const state = this.contentState.get(streamId);
     return state?.collectedUsage ?? [];
+  }
+
+  getRunMessages(streamId: string, expectedCreatedAt?: number): BaseMessage[] | undefined {
+    if (expectedCreatedAt != null && this.jobs.get(streamId)?.createdAt !== expectedCreatedAt) {
+      return undefined;
+    }
+    const graph = this.contentState.get(streamId)?.graphRef?.deref();
+    if (!graph) {
+      return undefined;
+    }
+    try {
+      return graph.getRunMessages();
+    } catch {
+      return undefined;
+    }
   }
 
   /**

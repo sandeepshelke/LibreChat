@@ -67,6 +67,7 @@ export * from './skillConfigurable';
 export * from './skillFiles';
 export * from './codeFilesSession';
 export * from './run';
+export * from './rounds';
 export * from './fading';
 export * from './publication';
 export * from './runtime';

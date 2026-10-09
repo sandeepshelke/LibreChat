@@ -8,6 +8,7 @@ import {
   getRunStepDurationMs,
   getRunStepCloseMetadata,
 } from 'librechat-data-provider';
+import type { BaseMessage } from '@librechat/agents/langchain/messages';
 import type { StandardGraph } from '@librechat/agents';
 import type { Agents } from 'librechat-data-provider';
 import type { Redis, Cluster } from 'ioredis';
@@ -4349,6 +4350,17 @@ export class RedisJobStore implements IJobStoreV2 {
       this.deleteLocalEntry(this.localGraphCache, streamId, undefined, entry);
       return null;
     }
+  }
+
+  getRunMessages(streamId: string, expectedCreatedAt?: number): BaseMessage[] | undefined {
+    const graphEntry = this.getLocalEntry(this.localGraphCache, streamId, expectedCreatedAt);
+    const graph = graphEntry?.value.deref();
+    if (!graphEntry || !graph) {
+      return undefined;
+    }
+    return (
+      this.readCachedGraph(streamId, graphEntry, graph, (g) => g.getRunMessages()) ?? undefined
+    );
   }
 
   async getContentParts(

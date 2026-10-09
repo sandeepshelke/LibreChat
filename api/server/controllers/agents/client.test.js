@@ -3622,6 +3622,103 @@ describe('AgentClient - startup telemetry', () => {
     ]);
   });
 
+  describe('tool call response tags on the saved answer', () => {
+    const toolPart = (id) => ({
+      type: ContentTypes.TOOL_CALL,
+      tool_call: { id, name: 'lookup', args: '{"q":"x"}', output: `out-${id}`, progress: 1 },
+    });
+    const runMessages = () => {
+      const { AIMessage, HumanMessage, ToolMessage } = jest.requireActual(
+        '@librechat/agents/langchain/messages',
+      );
+      return [
+        new HumanMessage('question'),
+        new AIMessage({ content: '', tool_calls: [{ id: 'a', name: 'lookup', args: {} }] }),
+        new ToolMessage({ tool_call_id: 'a', content: 'out-a' }),
+        new AIMessage({
+          content: '',
+          tool_calls: [
+            { id: 'b', name: 'lookup', args: {} },
+            { id: 'c', name: 'lookup', args: {} },
+          ],
+        }),
+        new ToolMessage({ tool_call_id: 'b', content: 'out-b' }),
+        new ToolMessage({ tool_call_id: 'c', content: 'out-c' }),
+      ];
+    };
+    const buildClient = (parts, graph) => {
+      jest.clearAllMocks();
+      mockCreateRun.mockImplementation(async () => ({
+        Graph: graph,
+        processStream: jest.fn(async () => {}),
+        getCalibrationRatio: jest.fn(() => 0),
+      }));
+      mockIsHITLEnabled.mockReturnValue(false);
+      const client = new AgentClient({
+        req: {
+          user: { id: 'user-123' },
+          body: {},
+          config: { endpoints: { [EModelEndpoint.agents]: {} } },
+          _resumableStreamId: 'conversation-tool-rounds',
+        },
+        res: {},
+        agent: {
+          id: 'agent-123',
+          endpoint: EModelEndpoint.openAI,
+          provider: EModelEndpoint.openAI,
+          model_parameters: { model: 'gpt-4' },
+          hide_sequential_outputs: false,
+        },
+        endpointTokenConfig: {},
+        eventHandlers: {},
+        contentParts: parts,
+        collectedUsage: [],
+        artifactPromises: [],
+      });
+      client.conversationId = 'conversation-tool-rounds';
+      client.responseMessageId = 'response-tool-rounds';
+      client.parentMessageId = 'parent-tool-rounds';
+      client.recordCollectedUsage = jest.fn().mockResolvedValue();
+      return client;
+    };
+    const tags = (content) => content.map((part) => part.response_index);
+
+    it('tags tool_call parts from the run messages and rebuilds one assistant message per response', async () => {
+      const client = buildClient([toolPart('a'), toolPart('b'), toolPart('c')], {
+        getRunMessages: () => runMessages(),
+        getCalibrationRatio: () => 0,
+      });
+
+      const { completion } = await client.sendCompletion([]);
+
+      expect(tags(completion)).toEqual([1, 3, 3]);
+      completion.forEach((part) => {
+        expect(Object.keys(part.tool_call)).not.toContain('response_index');
+      });
+      const { formatAgentMessages } = jest.requireActual('@librechat/agents');
+      const { messages } = formatAgentMessages([
+        { role: 'user', content: 'question' },
+        { role: 'assistant', content: JSON.parse(JSON.stringify(completion)) },
+      ]);
+      expect(messages.map((m) => (m.tool_calls ?? []).map((c) => c.id))).toEqual([
+        [],
+        ['a'],
+        [],
+        ['b', 'c'],
+        [],
+        [],
+      ]);
+    });
+
+    it('leaves the answer untagged when the run has no graph', async () => {
+      const client = buildClient([toolPart('a'), toolPart('b')], null);
+
+      const { completion } = await client.sendCompletion([]);
+
+      expect(tags(completion)).toEqual([undefined, undefined]);
+    });
+  });
+
   it('keeps a later non-provider run failure on the generic error path', async () => {
     jest.clearAllMocks();
     const { logger } = require('@librechat/data-schemas');

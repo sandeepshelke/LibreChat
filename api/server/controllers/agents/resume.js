@@ -29,6 +29,7 @@ const {
   buildAbortedResponseMetadata,
   sanitizeMessageForTransmit,
   filterMalformedContentParts,
+  tagRunToolCallResponses,
   getAgentCheckpointer,
   isContentFilterError,
   preflightResumeContent,
@@ -308,6 +309,7 @@ const recoverResumedResponseReference = (
 /** Resolve the segment's content for an unfinished save (mirrors finalize's source). */
 async function resolveSegmentContent(client, streamId, expectedCreatedAt) {
   const liveContent = Array.isArray(client?.contentParts) ? client.contentParts : [];
+  tagRunToolCallResponses(liveContent, client?.run?.Graph);
   const rawContent =
     liveContent.length > 0
       ? liveContent
@@ -456,6 +458,7 @@ async function finalizeResumedTurn({
   // content) and avoids a Redis re-read that can race appendChunk writes still in
   // flight. Fall back to the aggregated store content only when the live array is empty.
   const liveContent = Array.isArray(client?.contentParts) ? client.contentParts : [];
+  tagRunToolCallResponses(liveContent, client?.run?.Graph);
   const rawContent =
     liveContent.length > 0
       ? liveContent

@@ -851,6 +851,35 @@ describe('Message Operations', () => {
       expect(stored?.userSubmittedMessageFieldPaths).toHaveLength(2);
     });
 
+    it('persists response_index on tool_call content parts across save, update and reload', async () => {
+      const toolPart = (id: string, responseIndex?: number) => ({
+        type: 'tool_call',
+        tool_call: { id, name: 'lookup', args: '{}', output: `out-${id}` },
+        ...(responseIndex != null && { response_index: responseIndex }),
+      });
+      await saveMessage(mockCtx, {
+        ...mockMessageData,
+        isCreatedByUser: false,
+        content: [toolPart('a', 1), toolPart('b', 1), toolPart('c', 4), toolPart('legacy')],
+      });
+      await updateMessage(mockCtx.userId, {
+        messageId: 'msg123',
+        content: [toolPart('a', 1), toolPart('b', 1), toolPart('c', 4), toolPart('d', 6)],
+      });
+
+      const stored = await Message.findOne({ messageId: 'msg123', user: 'user123' }).lean();
+      expect(stored?.content).toEqual([
+        toolPart('a', 1),
+        toolPart('b', 1),
+        toolPart('c', 4),
+        toolPart('d', 6),
+      ]);
+      const [loaded] = await getMessages({ messageId: 'msg123' });
+      expect(
+        (loaded.content as Array<{ response_index?: number }>).map((p) => p.response_index),
+      ).toEqual([1, 1, 4, 6]);
+    });
+
     it('adds semantic steer paths without replacing existing field provenance', async () => {
       await saveMessage(mockCtx, {
         ...mockMessageData,

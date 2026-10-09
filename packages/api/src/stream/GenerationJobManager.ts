@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { tagToolCallResponses } from '@librechat/agents';
 import { logger, getTenantId, SYSTEM_TENANT_ID } from '@librechat/data-schemas';
 import {
   Constants,
@@ -4871,6 +4872,10 @@ class GenerationJobManagerClass {
         const committed = await this.jobStore.getContentParts(streamId, jobData.createdAt);
         if (committed) {
           content = committed.content;
+          tagToolCallResponses(
+            content,
+            this.jobStore.getRunMessages?.(streamId, jobData.createdAt),
+          );
         }
       } catch (contentError) {
         logger.warn(

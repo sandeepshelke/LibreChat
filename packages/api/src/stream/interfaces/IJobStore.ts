@@ -9,6 +9,7 @@ import type {
   UserSubmittedMessageFieldPath,
 } from 'librechat-data-provider';
 import type { ScheduleMCPOutcome, ScheduledMCPIdentity } from 'librechat-data-provider';
+import type { BaseMessage } from '@librechat/agents/langchain/messages';
 import type { RunStep, StandardGraph } from '@librechat/agents';
 import type { AgentEventDetachedTerminalEvidence } from '~/agents/triggers/types';
 import type { EarlyBufferOverflowState } from '../../types/earlyBufferRecovery';
@@ -1072,6 +1073,18 @@ export interface IJobStore {
   parkSteers(streamId: string, payload: string, expectedCreatedAt?: number): Promise<void>;
   claimParkedSteers(streamId: string, ownerFragment: string): Promise<string | undefined>;
   clearSteers(streamId: string): Promise<void>;
+
+  /**
+   * Run messages of the live graph, when this instance holds it and it can
+   * still be read. Lets a stop tag tool calls with their model response
+   * (`tagRunToolCallResponses`) before the partial answer is saved.
+   *
+   * In-memory: Reads the graph WeakRef
+   * Redis: Reads the local graph cache (same-instance only)
+   *
+   * @returns Run messages, or undefined when no readable graph is held
+   */
+  getRunMessages?(streamId: string, expectedCreatedAt?: number): BaseMessage[] | undefined;
 }
 
 /**

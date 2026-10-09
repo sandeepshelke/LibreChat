@@ -135,6 +135,7 @@ const {
   loadAgent: loadAgentFn,
   createMultiAgentMapper,
   filterMalformedContentParts,
+  tagRunToolCallResponses,
   countFormattedMessageTokens,
   prependFileContext,
   prependQuotes,
@@ -3679,6 +3680,7 @@ class AgentClient extends BaseClient {
       abortController: opts.abortController,
     });
 
+    tagRunToolCallResponses(this.contentParts, this.run?.Graph);
     const completion = filterMalformedContentParts(this.contentParts);
     if (this.isCompactionTurn()) {
       markCompactionOutcome(completion, {
@@ -5992,6 +5994,8 @@ class AgentClient extends BaseClient {
       // Mirror chatCompletion: settle label fills before the filter below can
       // shift part positions out from under an in-flight fill's claimed index.
       await this.settleActivityLabels();
+
+      tagRunToolCallResponses(this.contentParts, run.Graph);
 
       // Strip hidden intermediate sequential-agent content
       // before resume finalize/re-pause persistence reads `this.contentParts`, so a
