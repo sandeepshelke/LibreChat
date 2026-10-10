@@ -507,6 +507,35 @@ describe('resumable event generation fencing', () => {
     });
   });
 
+  it('tells turn diagnostics when subagent calls happen and when summarization starts', async () => {
+    const { GraphEvents } = jest.requireActual('@librechat/agents');
+    const { getDefaultHandlers } = require('../callbacks');
+    const turnDiagnostics = { note: jest.fn(), fireNote: jest.fn(), tools: {} };
+    const handlers = getDefaultHandlers({
+      res: { write: jest.fn() },
+      aggregateContent: jest.fn(),
+      toolEndCallback: jest.fn(),
+      collectedUsage: [],
+      subagentAggregatorsByToolCallId: new Map(),
+      turnDiagnostics,
+    });
+    await handlers[GraphEvents.ON_SUBAGENT_UPDATE].handle(GraphEvents.ON_SUBAGENT_UPDATE, {
+      parentToolCallId: 'p',
+      parentRunId: 'r',
+      subagentRunId: 'c',
+      subagentType: 'researcher',
+      subagentAgentId: 'a',
+      runId: 'r',
+      phase: 'start',
+      data: {},
+    });
+    expect(turnDiagnostics.note).toHaveBeenCalledWith('subagents_not_captured');
+    await handlers[GraphEvents.ON_SUMMARIZE_START]?.handle(GraphEvents.ON_SUMMARIZE_START, {});
+    if (handlers[GraphEvents.ON_SUMMARIZE_START] != null) {
+      expect(turnDiagnostics.fireNote).toHaveBeenCalledWith('summarization');
+    }
+  });
+
   it('forwards the originating job epoch with deferred attachments', () => {
     const { GenerationJobManager } = require('@librechat/api');
     const { createAttachmentEmitter } = require('../callbacks');

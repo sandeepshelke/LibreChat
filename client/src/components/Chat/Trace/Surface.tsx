@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
-import { useAtom } from 'jotai';
+import { useAtom, useSetAtom } from 'jotai';
 import type { ReactNode } from 'react';
-import { traceViewerConversationAtom } from './store';
+import { traceViewerConversationAtom, traceViewerFocusAtom } from './store';
 import Viewer from './Viewer';
 import { cn } from '~/utils';
 
@@ -18,6 +18,7 @@ export default function TraceSurface({
   children: ReactNode;
 }) {
   const [traceConversationId, setTraceConversationId] = useAtom(traceViewerConversationAtom);
+  const setFocus = useSetAtom(traceViewerFocusAtom);
   const open = conversationId != null && traceConversationId === conversationId;
 
   useEffect(() => {
@@ -25,6 +26,11 @@ export default function TraceSurface({
       setTraceConversationId(null);
     }
   }, [conversationId, traceConversationId, setTraceConversationId]);
+
+  const close = () => {
+    setFocus(null);
+    setTraceConversationId(null);
+  };
 
   return (
     <div className="relative flex h-full w-full flex-col">
@@ -36,9 +42,7 @@ export default function TraceSurface({
       >
         {children}
       </div>
-      {open && (
-        <Viewer conversationId={conversationId} onClose={() => setTraceConversationId(null)} />
-      )}
+      {open && <Viewer conversationId={conversationId} onClose={close} />}
     </div>
   );
 }

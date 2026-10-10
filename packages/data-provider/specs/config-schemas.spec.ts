@@ -1944,6 +1944,18 @@ describe('interface.traceViewer', () => {
     expect(interfaceSchema.parse({}).traceViewer).toBeUndefined();
   });
 
+  it('selects the local source and bounds its per-turn record cap', () => {
+    const parse = (traceViewer: Record<string, unknown>) =>
+      interfaceSchema.safeParse({ traceViewer }).success;
+    expect(traceViewerDefaults.source).toBe('langfuse');
+    expect(resolveTraceViewerConfig({ enabled: true, source: 'local' }).source).toBe('local');
+    expect(resolveTraceViewerConfig({ enabled: true }).source).toBe('langfuse');
+    expect(parse({ source: 'local', maxLocalRecordsPerTurn: 1000 })).toBe(true);
+    expect(parse({ source: 'tempo' })).toBe(false);
+    expect(parse({ maxLocalRecordsPerTurn: 0 })).toBe(false);
+    expect(parse({ maxLocalRecordsPerTurn: 1001 })).toBe(false);
+  });
+
   it('names tool rounds from the tracing backend only when asked to', () => {
     expect(resolveTraceViewerConfig({ enabled: true }).showToolNames).toBe(false);
     expect(resolveTraceViewerConfig({ enabled: true, showToolNames: true }).showToolNames).toBe(
@@ -1961,8 +1973,12 @@ describe('interface.traceViewer', () => {
         maxContentLength: -5,
         requestsPerMinute: Number.NaN,
         requestTimeoutMs: 50,
+        source: 'elsewhere',
+        maxLocalRecordsPerTurn: 5000,
       }),
     ).toEqual({
+      source: 'langfuse',
+      maxLocalRecordsPerTurn: 1000,
       enabled: false,
       showInputOutput: false,
       showToolNames: false,

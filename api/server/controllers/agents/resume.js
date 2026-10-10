@@ -306,6 +306,41 @@ const recoverResumedResponseReference = (
     },
   );
 
+/**
+ * A resume that fails before it can finalize still owes its turn an honest record: the
+ * continued diagnostics are saved as failed. A client that never restored its earlier
+ * segments stays silent, since writing then would replace the stored history with a fragment.
+ */
+async function persistFailedResumeDiagnostics({ req, client, meta, streamId, userId }) {
+  const fields = client?.getTurnDiagnosticsFields?.({ state: 'failed' }) ?? {};
+  const responseMessageId = meta?.responseMessageId ?? client?.responseMessageId;
+  if (fields.turnDiagnostics == null || fields.turnDiagnostics.turn.segments < 2) {
+    return;
+  }
+  try {
+    await saveMessage(
+      {
+        userId,
+        isTemporary: meta?.isTemporary ?? req.body?.isTemporary,
+        interfaceConfig: req?.config?.interfaceConfig,
+      },
+      {
+        messageId: responseMessageId,
+        conversationId: streamId,
+        ...fields,
+        unfinished: true,
+        user: userId,
+      },
+      { context: 'api/server/controllers/agents/resume.js - failed resume diagnostics' },
+    );
+  } catch (error) {
+    logger.warn(
+      '[ResumeAgentController] Failed resume diagnostics were not saved',
+      getSafeErrorMetadata(error),
+    );
+  }
+}
+
 /** Resolve the segment's content for an unfinished save (mirrors finalize's source). */
 async function resolveSegmentContent(client, streamId, expectedCreatedAt) {
   const liveContent = Array.isArray(client?.contentParts) ? client.contentParts : [];
@@ -346,7 +381,12 @@ async function persistRePauseProgress({ req, client, job, streamId, conversation
     conversationId,
     responseMessageId,
   });
-  if (content.length === 0 && attachments.length === 0) {
+  const diagnosticsFields = client?.getTurnDiagnosticsFields?.({ state: 'paused' }) ?? {};
+  if (
+    content.length === 0 &&
+    attachments.length === 0 &&
+    diagnosticsFields.turnDiagnostics == null
+  ) {
     return;
   }
   const savedResponseMessage = await saveMessage(
@@ -361,6 +401,7 @@ async function persistRePauseProgress({ req, client, job, streamId, conversation
     {
       messageId: responseMessageId,
       conversationId,
+      ...diagnosticsFields,
       ...(content.length > 0 && { content }),
       ...(attachments.length > 0 && { attachments }),
       ...(userSubmittedPaths.length > 0 && { userSubmittedPaths }),
@@ -506,6 +547,7 @@ async function finalizeResumedTurn({
     ...(userSubmittedPaths.length > 0 && { userSubmittedPaths }),
     ...(userSubmittedMessageFieldPaths.length > 0 && { userSubmittedMessageFieldPaths }),
   };
+  Object.assign(responseMessage, client?.getTurnDiagnosticsFields?.());
   if (meta.agent_id ?? req.body?.agent_id) {
     responseMessage.agent_id = meta.agent_id ?? req.body.agent_id;
   }
@@ -2233,6 +2275,13 @@ const ResumeAgentController = async (req, res, next, initializeClient, addTitle)
           `[ResumeAgentController] Skipping failed-resume finalization: job ${streamId} was replaced`,
         );
       } else {
+        await persistFailedResumeDiagnostics({
+          req,
+          client,
+          meta: job.metadata,
+          streamId,
+          userId,
+        });
         // completeJob atomically claims running -> error and parks steers before
         // publishing. If abort or a re-pause won, it returns false; only the
         // terminal-CAS winner may delete this generation's checkpoint scope.

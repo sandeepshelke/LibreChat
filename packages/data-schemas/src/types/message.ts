@@ -2,6 +2,7 @@ import type {
   TFeedbackRating,
   TFeedbackTag,
   TReasoningOverride,
+  TTurnDiagnostics,
   UserSubmittedMessageFieldPath,
 } from 'librechat-data-provider';
 import type { Document } from 'mongoose';
@@ -84,6 +85,8 @@ export interface IMessage extends Document {
   langfuseDestinationIds?: string[];
   /** The run whose trace this response reports, when that run's id is not the message's own (a failed turn's error row). */
   langfuseRunId?: string;
+  /** Bounded, metadata-only local diagnostics of the run that produced this response. */
+  turnDiagnostics?: TTurnDiagnostics;
   _meiliIndex?: boolean;
   files?: unknown[];
   plugin?: {

@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, memo } from 'react';
 import { Copy, Check } from 'lucide';
+import { Gauge } from 'lucide-react';
 import { useAtomValue } from 'jotai';
 import { useRecoilState } from 'recoil';
 import { getSpeechText, findMessageById, isUserInitiatedCompaction } from 'librechat-data-provider';
@@ -16,6 +17,8 @@ import { useMessagesIsSubmitting, useOptionalMessagesOperations } from '~/Provid
 import { useGenerationsByLatest, useLocalize } from '~/hooks';
 import { hasEditablePart } from './Content/editableParts';
 import { revealedQueuedTurnFamily } from '~/store/steer';
+import useResponseTrace from '../Trace/useResponseTrace';
+import ResponseStatsButton, { useResponseStat } from '../Trace/ResponseStats';
 import { Fork } from '~/components/Conversations';
 import { hoverButtonClasses } from './styles';
 import MessageAudio from './MessageAudio';
@@ -179,6 +182,13 @@ const HoverButtons = ({
     [isActiveStreamingMessage, getCanCopy],
   );
 
+  const responseTrace = useResponseTrace({
+    conversationId: conversation?.conversationId,
+    messageId: message.messageId,
+    enabled: message.isCreatedByUser !== true && !isActiveStreamingMessage,
+  });
+  const responseStats = useResponseStat(message.messageId);
+
   if (!conversation) {
     return null;
   }
@@ -265,6 +275,25 @@ const HoverButtons = ({
       {/* Feedback Buttons */}
       {!error && !isActiveStreamingMessage && !isCreatedByUser && handleFeedback != null && (
         <Feedback handleFeedback={handleFeedback} feedback={message.feedback} isLast={isLast} />
+      )}
+
+      {/* Turn diagnostics */}
+      {responseTrace.show && !responseStats && (
+        <HoverButton
+          onClick={responseTrace.open}
+          title={localize('com_ui_trace_response')}
+          icon={<Gauge size="19" aria-hidden="true" />}
+          isLast={isLast}
+          dataTestId="response-diagnostics-button"
+          className="active"
+        />
+      )}
+      {!isCreatedByUser && !isActiveStreamingMessage && (
+        <ResponseStatsButton
+          conversationId={conversation.conversationId}
+          messageId={message.messageId}
+          alwaysVisible={isLast}
+        />
       )}
 
       {/* Regenerate Button */}

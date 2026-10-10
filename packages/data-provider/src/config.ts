@@ -2494,15 +2494,21 @@ export type TMcpServersConfig = z.infer<typeof mcpServersSchema>;
 /** Values the trace viewer uses for any `interface.traceViewer` field left unset. */
 export const traceViewerDefaults = {
   enabled: false,
+  source: 'langfuse',
   showInputOutput: false,
   showToolNames: false,
   maxRecords: 1000,
   maxContentLength: 50_000,
   requestsPerMinute: 30,
   requestTimeoutMs: 10_000,
+  maxLocalRecordsPerTurn: 200,
 } as const;
 
+/** Where trace records are read from: the deployment's Langfuse project, or this app's own database. */
+export type TraceViewerSource = 'langfuse' | 'local';
+
 type TraceViewerLimitField =
+  | 'maxLocalRecordsPerTurn'
   | 'maxRecords'
   | 'maxContentLength'
   | 'requestsPerMinute'
@@ -2516,6 +2522,7 @@ export const traceViewerLimits: Readonly<
   maxContentLength: { min: 1, max: 1_000_000 },
   requestsPerMinute: { min: 1, max: 1000 },
   requestTimeoutMs: { min: 1000, max: 300_000 },
+  maxLocalRecordsPerTurn: { min: 1, max: 1000 },
 };
 
 const boundedIntegerSchema = (field: TraceViewerLimitField) =>
@@ -2524,6 +2531,13 @@ const boundedIntegerSchema = (field: TraceViewerLimitField) =>
 const traceViewerSchema = z.object({
   /** Shows the conversation trace control for traces this deployment exported. */
   enabled: z.boolean().optional(),
+  /**
+   * `local` stores metadata-only diagnostics for each response in this app's own database and
+   * reads them back without Langfuse. `langfuse` (the default) keeps the existing behavior.
+   */
+  source: z.enum(['langfuse', 'local']).optional(),
+  /** Model and tool records kept per response in `local` mode; further ones are counted, not stored. */
+  maxLocalRecordsPerTurn: boundedIntegerSchema('maxLocalRecordsPerTurn'),
   /** Returns observation input, output and metadata in the record inspector. */
   showInputOutput: z.boolean().optional(),
   /**
@@ -2545,6 +2559,7 @@ const traceViewerSchema = z.object({
 export type TTraceViewerConfig = z.infer<typeof traceViewerSchema>;
 export type TResolvedTraceViewerConfig = {
   enabled: boolean;
+  source: TraceViewerSource;
   showInputOutput: boolean;
   showToolNames: boolean;
 } & Record<TraceViewerLimitField, number>;
@@ -2566,12 +2581,17 @@ export function resolveTraceViewerConfig(
 ): TResolvedTraceViewerConfig {
   return {
     enabled: config?.enabled === true,
+    source: config?.source === 'local' ? 'local' : 'langfuse',
     showInputOutput: config?.showInputOutput === true,
     showToolNames: config?.showToolNames === true,
     maxRecords: boundedInteger(config?.maxRecords, 'maxRecords'),
     maxContentLength: boundedInteger(config?.maxContentLength, 'maxContentLength'),
     requestsPerMinute: boundedInteger(config?.requestsPerMinute, 'requestsPerMinute'),
     requestTimeoutMs: boundedInteger(config?.requestTimeoutMs, 'requestTimeoutMs'),
+    maxLocalRecordsPerTurn: boundedInteger(
+      config?.maxLocalRecordsPerTurn,
+      'maxLocalRecordsPerTurn',
+    ),
   };
 }
 

@@ -9,6 +9,7 @@ import type { RecordPresentation, ToolCallView } from './present';
 import type { TranslationKeys } from '~/hooks';
 import type { TraceNode } from './model';
 import StackedToolIcons from '~/components/Chat/Messages/Content/ToolOutput/StackedToolIcons';
+import { OUTCOME_LABEL, FIRST_GENERATION_LABEL, decodeSpeed } from './diagnostics';
 import { useConversationTraceRecordQuery } from '~/data-provider';
 import { useTraceFormat, recordDurationText } from './format';
 import { formatCost, formatTokens } from '~/utils/tokens';
@@ -308,7 +309,8 @@ function Inspector({
       value: recordDurationText(node, format, localize(STATUS_LABEL.running)),
     },
   ];
-  if (node.firstToken != null) {
+  /** A local record's own first-generation and decode figures sit under Diagnostics. */
+  if (node.firstToken != null && record.source !== 'local') {
     timing.push({
       label: 'com_ui_trace_ttft',
       value: format.duration(node.firstToken - node.start),
@@ -338,6 +340,92 @@ function Inspector({
       label: 'com_ui_trace_summary_cost',
       value: formatCost(record.cost, currency),
     });
+  }
+
+  const unavailable = localize('com_ui_trace_unavailable');
+  const local = record.source === 'local';
+  const finished = record.status !== 'running';
+  if (local && record.kind === 'generation' && finished && usage == null) {
+    usageFields.push(
+      { label: 'com_ui_trace_usage_input', value: unavailable },
+      { label: 'com_ui_trace_usage_output', value: unavailable },
+    );
+  }
+  const diagnostics: Field[] = [];
+  if (local) {
+    const { timings, routing } = record;
+    const speed = decodeSpeed(timings);
+    diagnostics.push({
+      label: 'com_ui_trace_outcome',
+      value: localize(OUTCOME_LABEL[record.outcome ?? 'running']),
+    });
+    if (record.errorCode != null) {
+      diagnostics.push({
+        label: 'com_ui_trace_error_code',
+        value: <span className="font-mono text-xs">{record.errorCode}</span>,
+      });
+    }
+    if (record.httpStatus != null) {
+      diagnostics.push({ label: 'com_ui_trace_http_status', value: String(record.httpStatus) });
+    }
+    if (record.attempt != null) {
+      diagnostics.push({ label: 'com_ui_trace_attempt', value: String(record.attempt) });
+    }
+    if (record.kind === 'generation') {
+      if (record.dependsOn != null && record.dependsOn.length > 0) {
+        diagnostics.push({
+          label: 'com_ui_trace_depends_on',
+          value: String(record.dependsOn.length),
+        });
+      }
+      diagnostics.push(
+        {
+          label: 'com_ui_trace_backend',
+          value: routing?.backend ?? unavailable,
+        },
+        {
+          label: 'com_ui_trace_queue_wait',
+          value: routing?.queueMs != null ? format.duration(routing.queueMs) : unavailable,
+        },
+      );
+      if (finished) {
+        diagnostics.push(
+          {
+            label: 'com_ui_trace_first_generation',
+            value:
+              timings?.firstGenerationMs != null
+                ? `${format.duration(timings.firstGenerationMs)}${
+                    timings.firstGenerationKind != null
+                      ? ` (${localize(FIRST_GENERATION_LABEL[timings.firstGenerationKind])})`
+                      : ''
+                  }`
+                : unavailable,
+          },
+          {
+            label: 'com_ui_trace_prompt_time',
+            value: timings?.promptMs != null ? format.duration(timings.promptMs) : unavailable,
+          },
+          {
+            label: 'com_ui_trace_decode_time',
+            value: timings?.decodeMs != null ? format.duration(timings.decodeMs) : unavailable,
+          },
+          {
+            label: 'com_ui_trace_decode_speed',
+            value:
+              speed != null
+                ? localize('com_ui_trace_tokens_per_second', { 0: speed.toFixed(1) })
+                : unavailable,
+          },
+        );
+      }
+    } else if (record.kind === 'tool') {
+      if (timings?.elapsedMs != null) {
+        diagnostics.push({
+          label: 'com_ui_trace_tool_dispatch_to_completion',
+          value: format.duration(timings.elapsedMs),
+        });
+      }
+    }
   }
 
   const preview = presentation.calls == null && presentation.preview != null && (
@@ -434,6 +522,7 @@ function Inspector({
             mcpIconMap={mcpIconMap}
           />
         )}
+        <Section title="com_ui_trace_diagnostics" fields={diagnostics} />
         <Section title="com_ui_trace_timing" fields={timing} />
         <Section
           title="com_ui_trace_model"

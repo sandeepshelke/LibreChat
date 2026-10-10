@@ -412,6 +412,7 @@ function getDefaultHandlers({
   eventChildActivity = null,
   resolveMcpServerName = null,
   toolTimingReplayEvents = [],
+  turnDiagnostics = null,
 }) {
   if (!res || !aggregateContent) {
     throw new Error(
@@ -515,15 +516,31 @@ function getDefaultHandlers({
   const toolTiming = createToolTimingAdapter({
     replayEvents: toolTimingReplayEvents,
     emit: emitForJob,
+    onPrepared: turnDiagnostics ? (marker) => turnDiagnostics.tools.prepared(marker) : undefined,
   });
+  const toolEndHandler = createOwnedToolEndHandler(toolEndCallback, logger);
   const handlers = {
-    [StepEvents.ON_TOOL_CALLS_DISPATCHED]: toolTiming.dispatch,
+    [StepEvents.ON_TOOL_CALLS_DISPATCHED]: turnDiagnostics
+      ? {
+          handle: async (event, data, metadata, graph) => {
+            turnDiagnostics.tools.dispatched(data);
+            return toolTiming.dispatch.handle(event, data, metadata, graph);
+          },
+        }
+      : toolTiming.dispatch,
     [GraphEvents.CHAT_MODEL_END]: new ModelEndHandler(
       collectedUsage,
       collectedThoughtSignatures,
       emitTokenUsage,
     ),
-    [GraphEvents.TOOL_END]: createOwnedToolEndHandler(toolEndCallback, logger),
+    [GraphEvents.TOOL_END]: turnDiagnostics
+      ? {
+          handle: async (event, data, metadata, graph) => {
+            turnDiagnostics.tools.ended(data);
+            return toolEndHandler.handle(event, data, metadata, graph);
+          },
+        }
+      : toolEndHandler,
     [GraphEvents.ON_RUN_STEP]: {
       /**
        * Handle ON_RUN_STEP event.
@@ -585,6 +602,7 @@ function getDefaultHandlers({
        * @param {RunStepClosedEvent} data - The event data.
        */
       handle: async (event, data) => {
+        turnDiagnostics?.tools.closed(data ?? {});
         const stepId = data?.id;
         if (typeof stepId === 'string' && contentParts) {
           /**
@@ -663,6 +681,7 @@ function getDefaultHandlers({
           });
         }
         toolTiming.completed(data);
+        turnDiagnostics?.tools.completed(data ?? {});
         aggregateContent({ event, data });
         const stepId = data?.result?.id;
         const runStep = stepMap?.get(stepId);
@@ -741,6 +760,7 @@ function getDefaultHandlers({
      * chain is configured to suppress intermediates.
      */
     handle: async (event, data, metadata) => {
+      turnDiagnostics?.note('subagents_not_captured');
       const isLastAgent = checkIfLastAgent(metadata?.last_agent_id, metadata?.langgraph_node);
       const visible = isLastAgent || !metadata?.hide_sequential_outputs;
       /**
@@ -790,6 +810,7 @@ function getDefaultHandlers({
   if (summarizationOptions?.enabled !== false) {
     handlers[GraphEvents.ON_SUMMARIZE_START] = {
       handle: async (_event, data) => {
+        turnDiagnostics?.fireNote('summarization');
         await emitForJob({
           event: GraphEvents.ON_SUMMARIZE_START,
           data,

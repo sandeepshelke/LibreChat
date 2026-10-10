@@ -396,6 +396,7 @@ async function saveErrorTurn(
     runCreated = false,
     sender,
     initialAgentId,
+    client,
   },
 ) {
   try {
@@ -532,6 +533,8 @@ async function saveErrorTurn(
       reqCtx,
       {
         ...langfuseTraceFields,
+        ...(client?.getTurnDiagnosticsFields?.({ state: 'failed', messageId: errorMessageId }) ??
+          {}),
         messageId: errorMessageId,
         conversationId,
         parentMessageId: errorParentMessageId,
@@ -1979,6 +1982,13 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
           model: resumeState.model || responseModel,
           ...(contextMeta != null && { contextMeta }),
         };
+        Object.assign(
+          partialMessage,
+          client?.getTurnDiagnosticsFields?.({
+            state: 'cancelled',
+            messageId: partialMessage.messageId,
+          }),
+        );
 
         if (req.body?.agent_id) {
           partialMessage.agent_id = req.body.agent_id;
@@ -3417,6 +3427,7 @@ const ResumableAgentController = async (req, res, next, initializeClient, addTit
                       runCreated: client?.run != null,
                       sender: client?.sender,
                       initialAgentId: verifiedInitialAgentId,
+                      client,
                     }),
                   ),
               })) === true;

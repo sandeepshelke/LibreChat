@@ -4,8 +4,12 @@ import {
   isForcedTemporaryRetention,
   RetentionMode,
 } from 'librechat-data-provider';
+import type {
+  TTurnDiagnostics,
+  TTurnSummarySource,
+  UserSubmittedMessageFieldPath,
+} from 'librechat-data-provider';
 import type { DeleteResult, FilterQuery, Model, Types, UpdateQuery } from 'mongoose';
-import type { UserSubmittedMessageFieldPath } from 'librechat-data-provider';
 import type { SearchParams } from 'meilisearch';
 import type { SchemaWithMeiliMethods } from '~/models/plugins/mongoMeili';
 import type { AppConfig, IConversation, IMessage } from '~/types';
@@ -526,6 +530,7 @@ export const CLIENT_MESSAGE_SELECT: string = [
   '-langfuseSampled',
   '-langfuseDestinationIds',
   '-langfuseRunId',
+  '-turnDiagnostics',
   '-metadata.thoughtSignatures',
   '-content.tool_call.backgroundTask.resultClaim',
   '-content.tool_call.backgroundTask.completionWakeup',
@@ -688,6 +693,51 @@ export interface SampledTraceMessage {
   orderKey?: string;
 }
 
+/** A response's stored local diagnostics with its position in the conversation's response order. */
+export interface StoredTurnDiagnostics {
+  messageId: string;
+  createdAt: Date;
+  orderKey: string;
+  diagnostics: TTurnDiagnostics;
+}
+
+/** A response's summary-sized slice of its stored diagnostics; see `TTurnSummarySource`. */
+export interface StoredTurnSummary extends Omit<StoredTurnDiagnostics, 'diagnostics'> {
+  diagnostics: TTurnSummarySource;
+}
+
+/** Rows a client authored never count: their diagnostics field is an ownership claim. */
+const SERVER_AUTHORED_DIAGNOSTICS_RESPONSE = {
+  isCreatedByUser: false,
+  isUserSubmitted: { $ne: true },
+  turnDiagnostics: { $exists: true, $ne: null },
+} as const;
+
+/** The snapshot fields a response summary reads; prompts and payloads are never stored there. */
+const SUMMARY_PROJECTION = {
+  _id: 1,
+  messageId: 1,
+  createdAt: 1,
+  'turnDiagnostics.version': 1,
+  'turnDiagnostics.turn.messageId': 1,
+  'turnDiagnostics.turn.state': 1,
+  'turnDiagnostics.turn.elapsedMs': 1,
+  'turnDiagnostics.turn.complete': 1,
+  'turnDiagnostics.turn.notes': 1,
+  'turnDiagnostics.turn.droppedRecords': 1,
+  'turnDiagnostics.records.messageId': 1,
+  'turnDiagnostics.records.traceId': 1,
+  'turnDiagnostics.records.kind': 1,
+  'turnDiagnostics.records.origin': 1,
+  'turnDiagnostics.records.name': 1,
+  'turnDiagnostics.records.startTime': 1,
+  'turnDiagnostics.records.usage.input': 1,
+  'turnDiagnostics.records.usage.output': 1,
+  'turnDiagnostics.records.usage.cacheRead': 1,
+  'turnDiagnostics.records.routing.queueMs': 1,
+  'turnDiagnostics.records.timings': 1,
+} as const;
+
 export interface ConversationTraceRefs {
   /** Creation time of the user's earliest message in the conversation. */
   firstMessageAt?: Date;
@@ -781,6 +831,33 @@ export interface MessageMethods {
     tenantId?: string;
     destinationIds: string[];
   }): Promise<boolean>;
+  /**
+   * The user's own responses with stored local diagnostics, newest first. `through` resumes at
+   * the response a previous read ended on, by the `orderKey` it returned.
+   */
+  listTurnDiagnostics(input: {
+    user: string;
+    conversationId: string;
+    tenantId?: string;
+    messageId?: string;
+    through?: { orderKey: string; inclusive?: boolean };
+    limit: number;
+  }): Promise<StoredTurnDiagnostics[]>;
+  /**
+   * Every user response of the conversation with stored local diagnostics, oldest first, reduced
+   * to the fields a response summary reads. It is one query and never returns a whole snapshot.
+   */
+  listTurnDiagnosticSummaries(input: {
+    user: string;
+    conversationId: string;
+    tenantId?: string;
+  }): Promise<StoredTurnSummary[]>;
+  /** Ids of every user response in the conversation that has stored local diagnostics. */
+  listTurnDiagnosticMessageIds(input: {
+    user: string;
+    conversationId: string;
+    tenantId?: string;
+  }): Promise<string[]>;
   recordSubagentTaskControlReceipt(input: {
     userId: string;
     conversationId: string;
@@ -4204,6 +4281,152 @@ export function createMessageMethods(
     }
   }
 
+  async function listTurnDiagnostics({
+    user,
+    conversationId,
+    tenantId,
+    messageId,
+    through,
+    limit,
+  }: {
+    user: string;
+    conversationId: string;
+    tenantId?: string;
+    messageId?: string;
+    through?: { orderKey: string; inclusive?: boolean };
+    limit: number;
+  }): Promise<StoredTurnDiagnostics[]> {
+    try {
+      const Message = mongoose.models.Message as Model<IMessage>;
+      const anchor = through != null ? parseTraceOrderKey(through.orderKey) : undefined;
+      if (through != null && anchor == null) {
+        throw new Error('Invalid turn diagnostics cursor');
+      }
+      const range =
+        anchor != null
+          ? {
+              $or: [
+                { createdAt: { $lt: anchor.createdAt } },
+                {
+                  createdAt: anchor.createdAt,
+                  _id: {
+                    [through?.inclusive === true ? '$lte' : '$lt']: new mongoose.Types.ObjectId(
+                      anchor.id,
+                    ),
+                  },
+                },
+              ],
+            }
+          : {};
+      const rows = await Message.find({
+        user,
+        conversationId,
+        ...traceTenantScope(tenantId),
+        ...SERVER_AUTHORED_DIAGNOSTICS_RESPONSE,
+        ...(messageId != null ? { messageId } : {}),
+        ...range,
+      })
+        .select('+turnDiagnostics _id messageId createdAt')
+        .sort({ createdAt: -1, _id: -1 })
+        .limit(limit)
+        .lean<
+          Array<
+            Pick<IMessage, 'messageId' | 'createdAt'> & {
+              _id: Types.ObjectId;
+              turnDiagnostics?: TTurnDiagnostics;
+            }
+          >
+        >();
+      return rows.flatMap(({ _id, messageId: id, createdAt, turnDiagnostics }) =>
+        typeof id === 'string' && createdAt != null && turnDiagnostics != null
+          ? [
+              {
+                messageId: id,
+                createdAt,
+                orderKey: traceOrderKey(createdAt, _id),
+                diagnostics: turnDiagnostics,
+              },
+            ]
+          : [],
+      );
+    } catch (err) {
+      logger.error('Error listing turn diagnostics:', err);
+      throw err;
+    }
+  }
+
+  async function listTurnDiagnosticSummaries({
+    user,
+    conversationId,
+    tenantId,
+  }: {
+    user: string;
+    conversationId: string;
+    tenantId?: string;
+  }): Promise<StoredTurnSummary[]> {
+    try {
+      const Message = mongoose.models.Message as Model<IMessage>;
+      const rows = await Message.find({
+        user,
+        conversationId,
+        ...traceTenantScope(tenantId),
+        ...SERVER_AUTHORED_DIAGNOSTICS_RESPONSE,
+      })
+        .select(SUMMARY_PROJECTION)
+        .sort({ createdAt: 1, _id: 1 })
+        .lean<
+          Array<
+            Pick<IMessage, 'messageId' | 'createdAt'> & {
+              _id: Types.ObjectId;
+              turnDiagnostics?: TTurnSummarySource;
+            }
+          >
+        >();
+      return rows.flatMap(({ _id, messageId: id, createdAt, turnDiagnostics }) =>
+        typeof id === 'string' && createdAt != null && turnDiagnostics != null
+          ? [
+              {
+                messageId: id,
+                createdAt,
+                orderKey: traceOrderKey(createdAt, _id),
+                diagnostics: turnDiagnostics,
+              },
+            ]
+          : [],
+      );
+    } catch (err) {
+      logger.error('Error listing turn diagnostic summaries:', err);
+      throw err;
+    }
+  }
+
+  async function listTurnDiagnosticMessageIds({
+    user,
+    conversationId,
+    tenantId,
+  }: {
+    user: string;
+    conversationId: string;
+    tenantId?: string;
+  }): Promise<string[]> {
+    try {
+      const Message = mongoose.models.Message as Model<IMessage>;
+      const rows = await Message.find({
+        user,
+        conversationId,
+        ...traceTenantScope(tenantId),
+        ...SERVER_AUTHORED_DIAGNOSTICS_RESPONSE,
+      })
+        .select('messageId')
+        .sort({ createdAt: -1, _id: -1 })
+        .lean<Array<Pick<IMessage, 'messageId'>>>();
+      return rows.flatMap(({ messageId: id }) => (typeof id === 'string' ? [id] : []));
+    } catch (err) {
+      logger.error('Error listing turn diagnostic message ids:', err);
+      throw err;
+    }
+  }
+
   /**
    * Retrieves a single message from the database.
    */
@@ -4375,6 +4598,9 @@ export function createMessageMethods(
     deleteMessagesSince,
     getMessages,
     getConversationTraceRefs,
+    listTurnDiagnostics,
+    listTurnDiagnosticSummaries,
+    listTurnDiagnosticMessageIds,
     hasSampledTraceMessage,
     getMessagesForSubagentThreadView,
     listSubagentTasksForThreads,

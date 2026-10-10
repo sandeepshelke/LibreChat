@@ -60,6 +60,7 @@ import type { ScheduleMCPExecution } from '~/schedules/authorization/execution';
 import type { ModelErrorTrackerCallback } from '~/agents/failures/tracker';
 import type { ToolInputValidationError } from '~/agents/toolValidation';
 import type { ResolvedToolApprovalHook } from '~/agents/hitl/hooks';
+import type { TurnDiagnostics } from '~/traces/capture';
 import type { LangfuseTraceContext } from '~/langfuse/identity';
 import type { ResolvedAlwaysApplySkill } from '~/agents/skills';
 import type { CodeExecutionContext } from '~/agents/execution';
@@ -80,6 +81,7 @@ import {
   createAttachedCodeEnvironmentPolicyHook,
   resolveAttachedCodeApprovalMode,
 } from '~/agents/hitl/byom';
+import { withDiagnosticsFetch } from '~/traces/controller';
 import {
   CHECK_BACKGROUND_TASK_NAME,
   registerBackgroundTaskTool,
@@ -1588,6 +1590,36 @@ function withModelCallbacks<T extends object>(
   return withCallbacks;
 }
 
+/** Gives the summarization client its own metered fetch, or arms a note when it cannot be metered. */
+function withSummarizationDiagnostics<S extends { config: AgentSummarizationConfig }>(
+  summarization: S,
+  diagnostics: TurnDiagnostics,
+  meterable: boolean,
+  agentConfiguration: { fetch?: unknown } | undefined,
+  selfSummarize: boolean,
+): S {
+  if (!meterable) {
+    diagnostics.armNote('summarization', 'models_not_captured');
+    return summarization;
+  }
+  const parameters = (summarization.config.parameters ?? {}) as {
+    configuration?: object;
+    model?: string;
+  };
+  const base = parameters.configuration ?? (selfSummarize ? agentConfiguration : undefined);
+  const wrapped = withDiagnosticsFetch({ configuration: base }, diagnostics, {
+    origin: 'summarization',
+    model: summarization.config.model,
+  });
+  return {
+    ...summarization,
+    config: {
+      ...summarization.config,
+      parameters: { ...parameters, configuration: wrapped.configuration },
+    },
+  };
+}
+
 /** Identifier for the self-spawn subagent (reuses parent's AgentInputs in an isolated child graph). */
 const SELF_SUBAGENT_TYPE = 'self';
 
@@ -2148,6 +2180,7 @@ export async function createRun({
   compactionSemanticIndex,
   initialSummary,
   modelCallbacks,
+  diagnostics,
   clientToolNames,
   calibrationRatio,
   fadingTier,
@@ -2226,6 +2259,8 @@ export async function createRun({
   initialSummary?: { text: string; tokenCount: number };
   /** Model callbacks inherited by root, summary, fallback, and subagent clients. */
   modelCallbacks?: readonly RunModelCallback[];
+  /** Local turn diagnostics; meters the root agent's OpenAI-compatible model calls only. */
+  diagnostics?: TurnDiagnostics;
   /** Caller-executed tools must never run eagerly before handoff is decided. */
   clientToolNames?: ReadonlySet<string>;
   /** Calibration ratio from previous run's contextMeta, seeds the pruner EMA */
@@ -2454,7 +2489,7 @@ export async function createRun({
       { user, tenantId, requestBody },
       agent,
     );
-    const summarization = modelCallbacks?.length
+    const summarizationBase = modelCallbacks?.length
       ? {
           ...shapedSummarization,
           config: {
@@ -2508,6 +2543,37 @@ export async function createRun({
       }
       llmConfig.usage = true;
     }
+
+    const meterable = (target: string | undefined) =>
+      target != null && (customProviders.has(target as Providers) || target === Providers.OPENAI);
+    /** The configuration before metering, so a self-summarizer can be given its own wrapper. */
+    const unmeteredConfiguration = llmConfig.configuration;
+    if (diagnostics != null && !isSubagent) {
+      if (meterable(agent.provider) || provider === Providers.OPENAI) {
+        Object.assign(
+          llmConfig,
+          withDiagnosticsFetch(llmConfig, diagnostics, { agentId: agent.id }),
+        );
+      } else {
+        diagnostics.noteModelsNotCaptured();
+      }
+    }
+    /**
+     * The summarizer is a separate call that must not count toward the answer. It inherits the
+     * agent's client options when it targets the same provider, so it gets its own metered fetch
+     * under a distinct origin; an unmeterable summarizer is only noted if it actually runs.
+     */
+    const summarization =
+      diagnostics != null && !isSubagent && summarizationBase.enabled
+        ? withSummarizationDiagnostics(
+            summarizationBase,
+            diagnostics,
+            meterable(summarizationBase.config.provider) ||
+              summarizationBase.config.provider === Providers.OPENAI,
+            unmeteredConfiguration,
+            provider === summarizationBase.config.provider,
+          )
+        : summarizationBase;
 
     /**
      * Override defer_loading for tools that were discovered in previous

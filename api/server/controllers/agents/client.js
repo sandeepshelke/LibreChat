@@ -7,7 +7,11 @@ const {
   isEnabled,
   checkAccess,
   buildRunToolSet,
-  logToolError,
+  turnDiagnosticsFields,
+  createToolErrorCallback,
+  restoreTurnDiagnostics,
+  withTitleDiagnostics,
+  persistSettledDiagnostics,
   sanitizeTitle,
   payloadParser,
   createSafeUser,
@@ -607,6 +611,9 @@ class AgentClient extends BaseClient {
     this.isChatCompletion = true;
     /** @type {number | undefined} */
     this.jobCreatedAt = options.jobCreatedAt;
+    /** Local turn diagnostics for this response, present only when the deployment enables them.
+     * @type {import('@librechat/api').TurnDiagnostics | null} */
+    this.turnDiagnostics = options.turnDiagnostics ?? null;
     /** Generation-scoped LangGraph checkpoint namespace. Legacy paused jobs
      * intentionally use the historical empty namespace. @type {string} */
     this.checkpointNamespace = options.checkpointNamespace ?? '';
@@ -699,6 +706,8 @@ class AgentClient extends BaseClient {
      *  `Constants.TOOL_CALL_LIMIT_FINISH_REASON` instead of publishing an error.
      *  @type {boolean} */
     this.stepLimitReached = false;
+    /** Set when the run ended on a terminal model or framework error shown to the user. */
+    this.terminalRunFailed = false;
     /** Stable per-generation sequence for subagent usage events. Detached
      * usage is billed outside `collectedUsage`, so array length is no longer
      * a valid sequence source. @type {number} */
@@ -4536,7 +4545,42 @@ class AgentClient extends BaseClient {
     }
   }
 
+  /** The persisted diagnostics of this response, `{}` when the feature is off. */
+  getTurnDiagnosticsFields({ state, messageId } = {}) {
+    return turnDiagnosticsFields(this.turnDiagnostics, {
+      state,
+      messageId,
+      aborted: this.abortController?.signal?.aborted === true,
+      pendingApproval: !!this.pendingApproval,
+      terminalError: this.terminalRunFailed === true,
+      stepLimitReached: this.stepLimitReached === true,
+    });
+  }
+
+  /** A resumed approval continues the stored snapshot of its turn instead of starting a new one. */
+  async seedTurnDiagnostics() {
+    if (this.turnDiagnostics == null || !this.responseMessageId) {
+      return;
+    }
+    await restoreTurnDiagnostics(
+      this.turnDiagnostics,
+      async () => {
+        const [stored] = await db.listTurnDiagnostics({
+          user: this.user ?? this.options.req?.user?.id,
+          conversationId: this.conversationId,
+          tenantId: resolveRequestTenantId(this.options.req),
+          messageId: this.responseMessageId,
+          limit: 1,
+        });
+        return stored;
+      },
+      logger,
+    );
+  }
+
+  /** Tool errors reach the log as before and, when enabled, the diagnostics by class only. */
   async chatCompletion({ payload, userMCPAuthMap, abortController = null }) {
+    this.turnDiagnostics?.bindMessage(this.responseMessageId);
     /** The inherited state is on the job before any abortable setup begins; a
      * publish already started while loading history is simply awaited. */
     await this.publishRunContextMeta?.();
@@ -5073,6 +5117,7 @@ class AgentClient extends BaseClient {
             createAgentMemoryCallback(this.attachmentMemoryContext ?? {}),
             terminalRunError.modelCallback,
           ],
+          diagnostics: this.turnDiagnostics ?? undefined,
           // This controller implements the full HITL pause/resume lifecycle (handleRunInterrupt
           // persists the pending action; the /resume route rebuilds + continues the run), so it
           // opts into the tool-approval wiring. Non-resumable callers (OpenAI-compat, Responses)
@@ -5192,7 +5237,7 @@ class AgentClient extends BaseClient {
           );
           await run.processStream({ messages: invocationMessages }, config, {
             callbacks: {
-              [Callback.TOOL_ERROR]: logToolError,
+              [Callback.TOOL_ERROR]: createToolErrorCallback(this.turnDiagnostics),
             },
           });
         } finally {
@@ -5297,6 +5342,7 @@ class AgentClient extends BaseClient {
           },
         );
         BaseClient.prototype.getModelBoundUserMessagePersistence.call(this)?.cancel();
+        this.terminalRunFailed = true;
         this.options.attachments = [];
         this.modelBoundCurrentFiles = [];
         this.contentParts.push({
@@ -5328,6 +5374,7 @@ class AgentClient extends BaseClient {
           },
         );
       } else {
+        this.terminalRunFailed = true;
         terminalRunError.log(err, abortController.signal);
         const videoError = resolveGoogleVideoError({
           error: err,
@@ -5454,6 +5501,8 @@ class AgentClient extends BaseClient {
     activityPhaseSnapshot,
     compactionSemanticIndex,
   }) {
+    this.turnDiagnostics?.bindMessage(this.responseMessageId);
+    await this.seedTurnDiagnostics?.();
     /** The seeded state is on the job before the run is rebuilt, so a Stop
      * during rebuild still persists it onto the stopped response. */
     await this.publishRunContextMeta?.();
@@ -5877,6 +5926,7 @@ class AgentClient extends BaseClient {
           attachmentMemoryCallback,
           terminalRunError.modelCallback,
         ],
+        diagnostics: this.turnDiagnostics ?? undefined,
         // State (messages, tool calls) is rehydrated from the checkpoint by
         // run.resume; createRun only needs the agents to rebuild the graph.
         messages: [],
@@ -5977,7 +6027,7 @@ class AgentClient extends BaseClient {
         await run.resume(
           resumeValue,
           config,
-          { callbacks: { [Callback.TOOL_ERROR]: logToolError } },
+          { callbacks: { [Callback.TOOL_ERROR]: createToolErrorCallback(this.turnDiagnostics) } },
           commandOptions,
         );
       } finally {
@@ -6046,6 +6096,7 @@ class AgentClient extends BaseClient {
           { conversationId: this.conversationId },
         );
       } else {
+        this.terminalRunFailed = true;
         terminalRunError.log(err, abortController.signal);
         this.contentParts.push({
           type: ContentTypes.ERROR,
@@ -6299,6 +6350,8 @@ class AgentClient extends BaseClient {
       },
     });
 
+    clientOptions = withTitleDiagnostics(clientOptions, this.turnDiagnostics, provider);
+
     try {
       await requirePrivateTextAdmission(req, abortController.signal);
       const titleResult = await this.run.generateTitle({
@@ -6369,6 +6422,26 @@ class AgentClient extends BaseClient {
         getSafeErrorMetadata(err),
       );
       return;
+    } finally {
+      /** A title that ends after the response was saved is added to the saved snapshot. */
+      await persistSettledDiagnostics(
+        this.turnDiagnostics,
+        ({ messageId, turnDiagnostics }) =>
+          db.saveMessage(
+            {
+              userId: this.user ?? req?.user?.id,
+              interfaceConfig: req?.config?.interfaceConfig,
+            },
+            {
+              messageId,
+              conversationId: this.conversationId,
+              turnDiagnostics,
+              user: this.user ?? req?.user?.id,
+            },
+            { context: 'api/server/controllers/agents/client.js #titleConvo diagnostics' },
+          ),
+        logger,
+      );
     }
   }
 

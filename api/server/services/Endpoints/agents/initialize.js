@@ -55,6 +55,7 @@ const {
   getScheduleMCPExecution,
   getMCPRequestContext,
   createSubagentCodeRouting,
+  createTurnDiagnostics,
 } = require('@librechat/api');
 const {
   ResourceType,
@@ -69,6 +70,7 @@ const {
   MAX_SUBAGENT_GRAPH_NODES,
   MAX_SUBAGENT_RUN_CONFIGS,
   isEphemeralAgentId,
+  resolveTraceViewerConfig,
   resolveAllowedStatefulCodeEnvironments,
 } = require('librechat-data-provider');
 const {
@@ -2021,6 +2023,12 @@ const initializeClientWithProvider = async ({
     toolExecuteOptions.provisionFiles,
   );
 
+  const traceViewer = resolveTraceViewerConfig(appConfig?.interfaceConfig?.traceViewer);
+  const turnDiagnostics =
+    traceViewer.enabled && traceViewer.source === 'local'
+      ? createTurnDiagnostics({ maxRecords: traceViewer.maxLocalRecordsPerTurn, logger })
+      : null;
+
   const eventHandlers = getDefaultHandlers({
     res,
     contentParts,
@@ -2041,6 +2049,7 @@ const initializeClientWithProvider = async ({
     eventChildActivity,
     resolveMcpServerName,
     toolTimingReplayEvents,
+    turnDiagnostics,
   });
 
   const client = new AgentClient({
@@ -2051,6 +2060,7 @@ const initializeClientWithProvider = async ({
     stepMap,
     agentConfigs,
     eventHandlers,
+    turnDiagnostics,
     collectedUsage,
     collectedThoughtSignatures,
     aggregateContent,

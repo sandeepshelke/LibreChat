@@ -92,6 +92,9 @@ jest.mock('../MessageNav', () => ({
   __esModule: true,
   default: () => null,
 }));
+jest.mock('~/components/Chat/Trace/ResponseStats', () => ({
+  ResponseStatsProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 
 jest.mock('~/utils', () => ({
   cn: (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' '),

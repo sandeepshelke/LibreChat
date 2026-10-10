@@ -1086,6 +1086,7 @@ class BaseClient {
       parentMessageId: userMessage.messageId,
       isCreatedByUser: false,
       ...(langfuseTraceFields ?? {}),
+      ...(this.getTurnDiagnosticsFields?.() ?? {}),
       isEdited,
       model: this.getResponseModel(),
       sender: this.sender,

@@ -58,7 +58,7 @@ export type TraceStep = {
   messageId: string;
   /** 1-based among the turn's response-run steps; the title run numbers its own. */
   index: number;
-  origin: 'run' | 'title';
+  origin: 'run' | 'title' | 'summarization';
   generationId: string | null;
   /**
    * The tool round that ran the step's calls. A model call asks for one round, so a step holding
@@ -224,7 +224,7 @@ function isSimpleRecord(record: TTraceRecord): boolean {
     record.kind === 'generation' ||
     isToolWork(record) ||
     record.status === 'error' ||
-    record.origin === 'title'
+    record.origin != null
   );
 }
 
@@ -604,7 +604,8 @@ function groupSteps(
     const right = steps.get(b);
     return (
       (left?.start ?? 0) - (right?.start ?? 0) ||
-      (left?.origin === 'title' ? 1 : 0) - (right?.origin === 'title' ? 1 : 0)
+      (left?.origin != null && left.origin !== 'run' ? 1 : 0) -
+        (right?.origin != null && right.origin !== 'run' ? 1 : 0)
     );
   });
   return namedCalls;

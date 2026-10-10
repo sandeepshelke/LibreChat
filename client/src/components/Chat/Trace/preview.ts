@@ -320,7 +320,7 @@ export function buildPreviewIndex(
   const stepsByTurn = new Map(model.turns.map((turn) => [turn.messageId, turn.steps]));
   for (const step of model.steps.values()) {
     const message = previewsByMessage.get(step.messageId);
-    if (message == null || message.parallel || step.origin === 'title') {
+    if (message == null || message.parallel || step.origin !== 'run') {
       continue;
     }
     if (message.finalOnly) {

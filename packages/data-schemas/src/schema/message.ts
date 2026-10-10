@@ -132,6 +132,12 @@ const messageSchema: Schema<IMessage> = new Schema(
     langfuseRunId: {
       type: String,
     },
+    /** Metadata-only local diagnostics for this response; read only through the trace methods. */
+    turnDiagnostics: {
+      type: mongoose.Schema.Types.Mixed,
+      default: undefined,
+      select: false,
+    },
     _meiliIndex: {
       type: Boolean,
       required: false,

@@ -14,3 +14,6 @@ export const traceModeAtom = createStorageAtom<TraceMode>('traceViewerMode', 'si
 
 /** How the overview and bars are scaled: one block per record, or recorded time. */
 export const traceScaleAtom = createStorageAtom<TraceScale>('traceViewerScale', 'sequence');
+
+/** The response whose diagnostics the open trace is narrowed to, or `null` for the whole conversation. */
+export const traceViewerFocusAtom = atom<string | null>(null);

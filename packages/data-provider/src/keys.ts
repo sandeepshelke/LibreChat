@@ -17,6 +17,7 @@ export enum QueryKeys {
   conversationTraceAvailability = 'conversationTraceAvailability',
   conversationTraceRecords = 'conversationTraceRecords',
   conversationTraceRecord = 'conversationTraceRecord',
+  conversationResponseStats = 'conversationResponseStats',
   user = 'user',
   passkeys = 'passkeys',
   name = 'name', // user key name

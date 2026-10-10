@@ -12,6 +12,7 @@ import {
 } from '~/hooks';
 import { MessagePartsHostProvider, appMessagePartsHost } from '~/Providers/MessagePartsHostContext';
 import { MessagesViewProvider, useChatContext, useFileMapContext } from '~/Providers';
+import { ResponseStatsProvider } from '~/components/Chat/Trace/ResponseStats';
 import { RowMountProvider, useProgressiveRowMount } from '~/hooks/Messages';
 import { useChatSurface } from '~/components/Chat/Subagents/surface';
 import useThreadRows from '~/hooks/Messages/useThreadRows';
@@ -105,6 +106,9 @@ function MessagesViewContent({
     [handleNearBottomChange, reportNearBottom],
   );
 
+  const newest = messages?.[messages.length - 1];
+  const expectedMessageId =
+    newest != null && newest.isCreatedByUser !== true ? newest.messageId : null;
   /** Re-arm from the conversation that owns the RENDERED tree: the Recoil
    *  conversation id lags the route during warm-cache navigation, and keying
    *  off it would first mount the new tree unwindowed, then narrow it after
@@ -161,29 +165,35 @@ function MessagesViewContent({
                 </div>
               ) : (
                 <>
-                  <div
-                    key={treeConversationId}
-                    ref={screenshotTargetRef}
-                    data-conversation-id={treeConversationId}
-                    data-testid="screenshot-target"
+                  <ResponseStatsProvider
+                    conversationId={conversationId}
+                    isSubmitting={isSubmitting}
+                    expectedMessageId={expectedMessageId}
                   >
-                    <RowMountProvider mountWindow={mountWindow}>
-                      {FLAT_THREAD && threadRows ? (
-                        <ThreadList
-                          rows={threadRows}
-                          setCurrentEditId={setCurrentEditId}
-                          currentEditId={currentEditId ?? null}
-                        />
-                      ) : (
-                        <MultiMessage
-                          messagesTree={_messagesTree}
-                          messageId={conversationId ?? null}
-                          setCurrentEditId={setCurrentEditId}
-                          currentEditId={currentEditId ?? null}
-                        />
-                      )}
-                    </RowMountProvider>
-                  </div>
+                    <div
+                      key={treeConversationId}
+                      ref={screenshotTargetRef}
+                      data-conversation-id={treeConversationId}
+                      data-testid="screenshot-target"
+                    >
+                      <RowMountProvider mountWindow={mountWindow}>
+                        {FLAT_THREAD && threadRows ? (
+                          <ThreadList
+                            rows={threadRows}
+                            setCurrentEditId={setCurrentEditId}
+                            currentEditId={currentEditId ?? null}
+                          />
+                        ) : (
+                          <MultiMessage
+                            messagesTree={_messagesTree}
+                            messageId={conversationId ?? null}
+                            setCurrentEditId={setCurrentEditId}
+                            currentEditId={currentEditId ?? null}
+                          />
+                        )}
+                      </RowMountProvider>
+                    </div>
+                  </ResponseStatsProvider>
                   <PendingTurn
                     scrollableRef={scrollableRef}
                     messages={messages}

@@ -521,10 +521,19 @@ export const conversationTrace = (conversationId: string) =>
   `${BASE_URL}/api/traces/${encodeURIComponent(conversationId)}`;
 export const conversationTraceAvailability = (conversationId: string) =>
   `${conversationTrace(conversationId)}/availability`;
-export const conversationTraceRecords = (conversationId: string, cursor?: string) =>
-  `${conversationTrace(conversationId)}/records${
-    cursor ? `?${new URLSearchParams({ cursor }).toString()}` : ''
-  }`;
+export const conversationTraceSummaries = (conversationId: string) =>
+  `${conversationTrace(conversationId)}/summaries`;
+export const conversationTraceRecords = (
+  conversationId: string,
+  cursor?: string,
+  messageId?: string,
+) => {
+  const params = new URLSearchParams({
+    ...(cursor ? { cursor } : {}),
+    ...(messageId ? { message: messageId } : {}),
+  }).toString();
+  return `${conversationTrace(conversationId)}/records${params ? `?${params}` : ''}`;
+};
 export const conversationTraceRecord = (
   conversationId: string,
   recordId: string,

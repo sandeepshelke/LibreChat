@@ -4,6 +4,7 @@ type TraceRefFields = {
   langfuseSampled?: boolean | null;
   langfuseDestinationIds?: string[] | null;
   langfuseRunId?: string | null;
+  turnDiagnostics?: unknown;
 };
 
 export function traceIdForMessage(messageId: string): string {
@@ -24,6 +25,7 @@ export function withoutTraceRefs<T extends TraceRefFields>(
     langfuseSampled: _sampled,
     langfuseDestinationIds: _destinations,
     langfuseRunId: _runId,
+    turnDiagnostics: _diagnostics,
     ...rest
   } = message;
   return { ...rest, langfuseSampled: false };

@@ -5,6 +5,7 @@ import type {
   TTraceAvailability,
   TTraceRecordParams,
   TTraceRecordDetail,
+  TResponseStatsPage,
 } from './types/traces';
 import type { TInsightsAccessResponse, TInsightsParams, TInsightsResponse } from './types/insights';
 import type { ScheduleMCPConsentView, ConfirmScheduleMCPConsent } from './types/scheduleConsent';
@@ -52,12 +53,22 @@ export function getConversationTraceAvailability(
   return request.get(endpoints.conversationTraceAvailability(conversationId));
 }
 
+export function getConversationResponseStats(
+  conversationId: string,
+  signal?: AbortSignal,
+): Promise<TResponseStatsPage> {
+  return request.get(
+    endpoints.conversationTraceSummaries(conversationId),
+    signal ? { signal } : undefined,
+  );
+}
+
 export function getConversationTraceRecords(
-  { conversationId, cursor }: TTracePageParams,
+  { conversationId, cursor, messageId }: TTracePageParams,
   signal?: AbortSignal,
 ): Promise<TTracePage> {
   return request.get(
-    endpoints.conversationTraceRecords(conversationId, cursor),
+    endpoints.conversationTraceRecords(conversationId, cursor, messageId),
     signal ? { signal } : undefined,
   );
 }

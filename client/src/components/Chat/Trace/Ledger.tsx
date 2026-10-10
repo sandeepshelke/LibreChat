@@ -99,6 +99,11 @@ function GroupBar({ span, domain }: { span: TraceSpan; domain: Domain }) {
   );
 }
 
+const AUXILIARY_STEP_LABEL = {
+  title: 'com_ui_trace_title_step',
+  summarization: 'com_ui_trace_summarization_step',
+} as const;
+
 function recordTokens(node: TraceNode): string {
   const usage = node.record.usage;
   if (node.record.kind !== 'generation' || usage == null) {
@@ -441,11 +446,11 @@ function Ledger({
       const { step } = row;
       return renderGroupRow(row, index, {
         label:
-          step.origin === 'title'
-            ? localize('com_ui_trace_title_step')
-            : localize('com_ui_trace_step', {
+          step.origin === 'run'
+            ? localize('com_ui_trace_step', {
                 0: String(step.index + (stepOffsets.get(step.messageId) ?? 0)),
-              }),
+              })
+            : localize(AUXILIARY_STEP_LABEL[step.origin]),
         description: stepDescription(step),
         errorCount: step.errorCount,
         recordCount: step.recordCount,

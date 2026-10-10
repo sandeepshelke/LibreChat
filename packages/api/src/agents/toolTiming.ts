@@ -63,9 +63,12 @@ export type ToolTimingAdapter = {
 export function createToolTimingAdapter({
   replayEvents,
   emit,
+  onPrepared,
 }: {
   replayEvents?: readonly { event: string; data?: unknown }[];
   emit(event: TimingEvent): Promise<void> | void;
+  /** Sees each preparation marker the adapter derives, for local diagnostics. */
+  onPrepared?: (marker: unknown) => void;
 }): ToolTimingAdapter {
   const tracker = createToolTimingTracker(replayEvents);
   const childStamps = new WeakMap<ChildTimingAggregator, Map<string, ChildTimingStamps>>();
@@ -78,6 +81,11 @@ export function createToolTimingAdapter({
     },
     async delta(fragment) {
       for (const marker of tracker.observe(fragment)) {
+        try {
+          onPrepared?.(marker);
+        } catch {
+          /* diagnostics never affect the run */
+        }
         await emit({ event: StepEvents.ON_TOOL_PREPARATION, data: marker });
       }
     },

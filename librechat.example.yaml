@@ -327,6 +327,15 @@ interface:
   # needs a Langfuse release that serves the v2 Observations API.
   # traceViewer:
   #   enabled: false
+  #   # Where records come from: `langfuse` (default, the mode described above) or
+  #   # `local`, metadata-only turn diagnostics (timings, token usage, router queue wait,
+  #   # outcome) that agent runs persist on their own assistant messages in MongoDB. Local
+  #   # mode needs no tracing service, never stores prompts, replies or tool arguments, and
+  #   # adds a per-response diagnostics button. Only custom/OpenAI-compatible agent model
+  #   # calls are measured; other providers show tools with an honest "not captured" note.
+  #   source: langfuse
+  #   # Records one response may store in `local` mode (1-1000).
+  #   maxLocalRecordsPerTurn: 200
   #   # Traces are matched to users by the internal user id, so no trace is shown while
   #   # langfuse.trace.userIdField exports another user field.
   #   # Return observation input, output and metadata in the record inspector. Input

@@ -13,7 +13,7 @@ import type {
   TTraceErrorResponse,
 } from 'librechat-data-provider';
 import type { Request, Response } from 'express';
-import type { TraceQuery, TraceReader } from './types';
+import type { TraceQuery, TraceReader, ResponseStatsReader } from './types';
 import type { ServerRequest } from '~/types/http';
 import { TraceReadError } from './types';
 
@@ -41,12 +41,15 @@ const toRouteHandler =
 
 export interface TraceHandlers {
   availability: TraceRouteHandler;
+  summaries: TraceRouteHandler;
   records: TraceRouteHandler;
   record: TraceRouteHandler;
 }
 
 export interface TraceHandlerDeps {
   reader: TraceReader;
+  /** Local per-answer figures; a deployment without it answers the summaries route as unsupported. */
+  stats?: ResponseStatsReader;
   /** `tenantId: null` is the tenantless scope, as the subagent thread views pass it. */
   getConvoOwnership: (
     userId: string,
@@ -127,6 +130,7 @@ function applyCostPolicy(record: TTraceRecord, includeCost: boolean): TTraceReco
  */
 export function createTraceHandlers({
   reader,
+  stats,
   getConvoOwnership,
 }: TraceHandlerDeps): TraceHandlers {
   function prepareScope(req: TraceRequest, res: Response): ScopeResult {
@@ -223,6 +227,22 @@ export function createTraceHandlers({
     }
   }
 
+  async function summaries(req: TraceRequest, res: Response): Promise<Response> {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      const scope = await resolveScope(req, res);
+      if ('errorCode' in scope) {
+        return sendTraceError(res, scope.errorCode);
+      }
+      if (stats == null || scope.query.settings.source !== 'local') {
+        return sendTraceError(res, 'unsupported');
+      }
+      return res.status(200).json(await stats.listResponseStats(scope.query));
+    } catch (error) {
+      return handleFailure(res, error, 'summaries');
+    }
+  }
+
   async function records(req: TraceRequest, res: Response): Promise<Response> {
     res.set('Cache-Control', 'private, no-store');
     try {
@@ -239,7 +259,11 @@ export function createTraceHandlers({
       ) {
         return sendTraceError(res, 'invalid_request');
       }
-      const page = await reader.listRecords({ ...scope.query, cursor });
+      const focus = firstQueryValue(req.query.message);
+      if (focus != null && !isValidId(focus)) {
+        return sendTraceError(res, 'invalid_request');
+      }
+      const page = await reader.listRecords({ ...scope.query, cursor, messageId: focus });
       const includeCost = req.config?.interfaceConfig?.contextCost === true;
       return res.status(200).json({
         ...page,
@@ -282,6 +306,7 @@ export function createTraceHandlers({
 
   return {
     availability: toRouteHandler(availability),
+    summaries: toRouteHandler(summaries),
     records: toRouteHandler(records),
     record: toRouteHandler(record),
   };

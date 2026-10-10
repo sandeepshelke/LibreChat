@@ -1,5 +1,4 @@
 import { useId, useRef, useMemo, useState, useEffect, useCallback, useDeferredValue } from 'react';
-import axios from 'axios';
 import { useAtom } from 'jotai';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { QueryKeys, resolveTraceViewerConfig } from 'librechat-data-provider';
@@ -17,15 +16,9 @@ import {
   TriangleAlert,
   ChartNoAxesGantt,
 } from 'lucide-react';
-import type {
-  TMessage,
-  TTraceRecord,
-  TTraceErrorCode,
-  TTraceErrorResponse,
-} from 'librechat-data-provider';
+import type { TMessage, TTraceRecord, TTraceTurnSummary } from 'librechat-data-provider';
 import type { KeyboardEvent } from 'react';
 import type { TraceNode, TraceWindow } from './model';
-import type { TranslationKeys } from '~/hooks';
 import {
   keepNewestTracePage,
   useGetStartupConfig,
@@ -44,42 +37,24 @@ import {
   collapsibleKeys,
 } from './model';
 import { alignTurns, buildPreviews, buildPreviewIndex, buildActivityIndex } from './preview';
+import { traceModeAtom, traceScaleAtom, traceViewerFocusAtom } from './store';
 import { useMCPIconMap, useMCPServerNames } from '~/hooks/MCP';
-import { traceModeAtom, traceScaleAtom } from './store';
 import { presentTool, presentRecord } from './present';
 import { appearanceOf, STATUS_LABEL } from './kinds';
 import { useAgentsMapContext } from '~/Providers';
 import { useTraceFormat } from './format';
 import { useLocalize } from '~/hooks';
+import TurnPanel from './TurnPanel';
+import { traceErrorCode, traceErrorMessageKey } from './errors';
 import Inspector from './Inspector';
 import Timeline from './Timeline';
 import Summary from './Summary';
 import Ledger from './Ledger';
 import { cn } from '~/utils';
 
-const ERROR_MESSAGES: Partial<Record<TTraceErrorCode, TranslationKeys>> = {
-  invalid_request: 'com_ui_trace_error_changed',
-  not_found: 'com_ui_trace_error_not_found',
-  rate_limited: 'com_ui_trace_error_rate_limited',
-  timeout: 'com_ui_trace_error_timeout',
-  unauthorized: 'com_ui_trace_error_unauthorized',
-  unsupported: 'com_ui_trace_error_unsupported',
-};
-
 const PRESSED = 'bg-surface-active-alt';
 /** A response's header quotes the question it answered; the row truncates what does not fit. */
 const ASKED_LENGTH = 120;
-
-function errorCodeOf(error: unknown): TTraceErrorCode | undefined {
-  return axios.isAxiosError<TTraceErrorResponse>(error)
-    ? error.response?.data?.errorCode
-    : undefined;
-}
-
-function errorMessageKey(error: unknown): TranslationKeys {
-  const code = errorCodeOf(error);
-  return (code != null ? ERROR_MESSAGES[code] : undefined) ?? 'com_ui_trace_error_generic';
-}
 
 /**
  * The conversation trace: a summary, a pinned overview of every loaded record,
@@ -105,7 +80,8 @@ export default function Viewer({
   const showCost = startupConfig?.interface?.contextCost === true;
   const currency = startupConfig?.interface?.currency;
 
-  const recordsQuery = useConversationTraceRecordsQuery(conversationId, true);
+  const [focus, setFocus] = useAtom(traceViewerFocusAtom);
+  const recordsQuery = useConversationTraceRecordsQuery(conversationId, true, focus);
   const { data: langfuseSession } = useGetLangfuseSessionLinkQuery(
     conversationId,
     startupConfig?.langfuseConnectionAccess === true,
@@ -139,7 +115,21 @@ export default function Viewer({
   const deferredQuery = useDeferredValue(query);
 
   const pages = recordsQuery.data?.pages;
-  const records = useMemo(() => pages?.flatMap((page) => page.records) ?? [], [pages]);
+  const allRecords = useMemo(() => pages?.flatMap((page) => page.records) ?? [], [pages]);
+  const records = useMemo(
+    () => (focus != null ? allRecords.filter((record) => record.messageId === focus) : allRecords),
+    [allRecords, focus],
+  );
+  const turns = useMemo(() => {
+    const byMessage = new Map<string, TTraceTurnSummary>();
+    for (const page of pages ?? []) {
+      for (const turn of page.turns ?? []) {
+        byMessage.set(turn.messageId, turn);
+      }
+    }
+    return byMessage;
+  }, [pages]);
+  const focusedTurn = focus != null ? turns.get(focus) : undefined;
   const recordSources = useMemo(() => {
     const sources = new Map<string, string>();
     for (const page of pages ?? []) {
@@ -382,10 +372,27 @@ export default function Viewer({
           <EmptyState
             icon={TriangleAlert}
             title={localize('com_ui_trace_error_title')}
-            description={localize(errorMessageKey(recordsQuery.error))}
+            description={localize(traceErrorMessageKey(recordsQuery.error))}
             action={
               <Button size="sm" variant="outline" onClick={refresh}>
                 {localize('com_ui_retry')}
+              </Button>
+            }
+          />
+        </div>
+      );
+    }
+
+    if (model.nodes.size === 0 && recordsQuery.hasNextPage !== true && focus != null) {
+      return (
+        <div className="flex flex-1 items-center justify-center p-4">
+          <EmptyState
+            icon={ChartNoAxesGantt}
+            title={localize('com_ui_trace_empty_title')}
+            description={localize('com_ui_trace_response_empty')}
+            action={
+              <Button size="sm" variant="outline" onClick={() => setFocus(null)}>
+                {localize('com_ui_trace_show_conversation')}
               </Button>
             }
           />
@@ -415,6 +422,15 @@ export default function Viewer({
     return (
       <>
         <div className="border-border-light flex flex-col gap-3 border-b px-3 py-3 md:px-4">
+          {focus != null && (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-text-secondary text-sm">{localize('com_ui_trace_focused')}</p>
+              <Button size="sm" variant="outline" onClick={() => setFocus(null)}>
+                {localize('com_ui_trace_show_conversation')}
+              </Button>
+            </div>
+          )}
+          {focusedTurn != null && <TurnPanel turn={focusedTurn} records={records} />}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <Summary
               summary={model.summary}
@@ -549,7 +565,7 @@ export default function Viewer({
                 {cachedReadFailed && (
                   <>
                     <span role="alert" className="text-status-error text-xs">
-                      {localize(errorMessageKey(recordsQuery.error))}
+                      {localize(traceErrorMessageKey(recordsQuery.error))}
                     </span>
                     <Button
                       size="sm"
@@ -558,7 +574,7 @@ export default function Viewer({
                       onClick={
                         /** A continuation the trace no longer matches can only be reloaded from the newest page. */
                         lastRead === 'older' &&
-                        errorCodeOf(recordsQuery.error) !== 'invalid_request'
+                        traceErrorCode(recordsQuery.error) !== 'invalid_request'
                           ? loadOlder
                           : refresh
                       }

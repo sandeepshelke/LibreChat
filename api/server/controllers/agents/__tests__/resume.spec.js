@@ -4867,6 +4867,41 @@ describe('ResumeAgentController (POST /agents/chat/resume)', () => {
       expect(mockSaveMessage).not.toHaveBeenCalled();
     });
 
+    it('persists failed diagnostics for a resumed turn whose earlier segments were restored', async () => {
+      const failed = (segments) => ({
+        turnDiagnostics: { version: 1, turn: { state: 'failed', segments }, records: [] },
+      });
+      mockGenerationJobManager.getJob.mockResolvedValue(makeToolApprovalJob());
+      mockInitializeClient.mockResolvedValue({
+        client: makeClient({
+          resumeCompletion: jest.fn().mockRejectedValue(new Error('boom')),
+          getTurnDiagnosticsFields: jest.fn(() => failed(2)),
+        }),
+        userMCPAuthMap: {},
+      });
+      await post(approveBody());
+      await settled;
+      await flush();
+      expect(mockSaveMessage).toHaveBeenCalledTimes(1);
+      expect(mockSaveMessage.mock.calls[0][1]).toMatchObject({
+        conversationId: CONVO_ID,
+        turnDiagnostics: { turn: { state: 'failed', segments: 2 } },
+      });
+
+      mockSaveMessage.mockClear();
+      mockInitializeClient.mockResolvedValue({
+        client: makeClient({
+          resumeCompletion: jest.fn().mockRejectedValue(new Error('boom')),
+          getTurnDiagnosticsFields: jest.fn(() => failed(1)),
+        }),
+        userMCPAuthMap: {},
+      });
+      await post(approveBody());
+      await settled;
+      await flush();
+      expect(mockSaveMessage).not.toHaveBeenCalled();
+    });
+
     it('uses a normalized resume error when protection is active', async () => {
       const rawValue = 'PRIVATE-RESUME-PROVIDER-ECHO';
       requestConfigOverrides = { filters: { messages: { pii: {} } } };

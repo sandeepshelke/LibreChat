@@ -35,6 +35,11 @@ export type PresentationSources = {
   mcpServerNames?: readonly string[];
 };
 
+const AUXILIARY_ROLE_TITLES = {
+  title: 'com_ui_trace_role_title',
+  summarization: 'com_ui_trace_role_summarization',
+} as const;
+
 const ROLE_TITLES: Record<
   Exclude<TTraceRecordRole, 'agent' | 'tools' | 'plumbing'>,
   TranslationKeys
@@ -110,9 +115,9 @@ export function presentRecord(node: TraceNode, sources: PresentationSources): Re
   }
   /** A wrapper only frames a model call; every span as recorded is where it shows, under its own name. */
   if (record.role != null && record.role !== 'agent' && record.role !== 'plumbing') {
-    const named = record.role === 'model' && record.origin === 'title';
+    const origin = record.role === 'model' ? record.origin : undefined;
     return {
-      title: localize(named ? 'com_ui_trace_role_title' : ROLE_TITLES[record.role]),
+      title: localize(origin != null ? AUXILIARY_ROLE_TITLES[origin] : ROLE_TITLES[record.role]),
       preview: activity.labels.get(record.id) ?? previewOf(node),
       technicalName: record.name,
     };

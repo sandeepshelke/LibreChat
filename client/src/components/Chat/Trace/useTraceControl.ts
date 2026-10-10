@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { QueryKeys, Constants, resolveTraceViewerConfig } from 'librechat-data-provider';
 import type { TTraceViewerConfig } from 'librechat-data-provider';
 import { keepNewestTracePage, useConversationTraceAvailabilityQuery } from '~/data-provider';
-import { traceViewerConversationAtom } from './store';
+import { traceViewerConversationAtom, traceViewerFocusAtom } from './store';
 
 export type TraceControl = {
   /** A persisted conversation of the user's with at least one readable trace. */
@@ -33,6 +33,7 @@ export default function useTraceControl({
   enabled?: boolean;
 }): TraceControl {
   const setTraceConversation = useSetAtom(traceViewerConversationAtom);
+  const setFocus = useSetAtom(traceViewerFocusAtom);
   const persisted = conversationId != null && !UNPERSISTED_IDS.has(conversationId);
   const eligible = enabled && persisted && resolveTraceViewerConfig(traceViewer).enabled;
 
@@ -56,9 +57,10 @@ export default function useTraceControl({
 
   const open = useCallback(() => {
     if (conversationId != null) {
+      setFocus(null);
       setTraceConversation(conversationId);
     }
-  }, [conversationId, setTraceConversation]);
+  }, [conversationId, setTraceConversation, setFocus]);
 
   return { show: eligible && data?.available === true, open };
 }
