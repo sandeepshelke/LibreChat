@@ -1,4 +1,7 @@
 {
+  "com_ui_inline_video": "Video",
+  "com_ui_loading_video": "Loading video...",
+  "com_ui_load_video": "Load video",
   "com_ui_private_text_hidden": "Private details hidden from the model",
   "com_ui_private_text_loading": "Loading your original message…",
   "com_ui_private_text_retry": "Retry loading original",

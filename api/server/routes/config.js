@@ -341,6 +341,7 @@ router.get('/', async function (req, res) {
         appConfig?.mcpAppSandbox?.maxActiveViews,
         appConfig?.mcpAppSandbox?.maxActionPreviewChars,
         appConfig?.mcpAppSandbox?.operationLimits,
+        appConfig?.mcpAppSandbox?.inlineVideoServers,
       ),
       ...codeEnvironmentMoveCapabilities,
       ...resolveCodeWorkspaceInheritanceCapability(process.env.CODE_ENVIRONMENT_DECISION_VERSION),

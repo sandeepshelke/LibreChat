@@ -639,6 +639,10 @@ actions:
 # configuration. Set url to a dedicated origin routed to /api/mcp/sandbox. Defaults are shown.
 # mcpAppSandbox:
 #   url: https://mcp-sandbox.example.com/api/mcp/sandbox
+#   # Opt-in for trusted generate_video/play_video Apps using the video-job resource contract.
+#   # One inline player per job replaces tool cards and video-only narration; other tools are unchanged.
+#   # Only visible players open, within maxActiveViews; existing action approvals still apply.
+#   inlineVideoServers: []  # e.g. ["video-generation"]
 #   maxSourcesPerDirective: 32
 #   maxSerializedLength: 4096
 #   maxPersistedAppBytes: 1048576

@@ -2348,6 +2348,33 @@ describe('MCP Apps configuration', () => {
       maxActionPreviewChars: DEFAULT_MCP_APP_ACTION_PREVIEW_CHARS,
       operationLimits: DEFAULT_MCP_APP_OPERATION_LIMITS,
     });
+
+    expect(
+      configSchema.parse({ version: '1.2.1' }).mcpAppSandbox.inlineVideoServers,
+    ).toBeUndefined();
+    const sandbox = configSchema.parse({
+      version: '1.2.1',
+      mcpAppSandbox: { inlineVideoServers: ['video-generation'] },
+    }).mcpAppSandbox;
+    expect(
+      resolveMCPAppsPolicy(
+        true,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        sandbox.inlineVideoServers,
+      ).inlineVideoServers,
+    ).toEqual(['video-generation']);
+    expect(
+      configSchema.safeParse({
+        version: '1.2.1',
+        mcpAppSandbox: { inlineVideoServers: [''] },
+      }).success,
+    ).toBe(false);
     expect(
       configSchema.parse({
         version: '1.2.1',

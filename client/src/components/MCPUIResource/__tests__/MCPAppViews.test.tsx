@@ -87,6 +87,118 @@ describe('MCPAppViews', () => {
     );
   });
 
+  it('shows one automatic video for generate and play, without tool controls or remounting', () => {
+    const videoId = '00000000-0000-4000-8000-000000000001';
+    const generated = app({
+      serverName: 'video-generation',
+      toolName: 'generate_video',
+      structuredContent: {
+        videoId,
+        videoUri: `videos://${videoId}`,
+        statusUri: `video-jobs://${videoId}`,
+      },
+    });
+    const first = attachment({ toolCallId: 'generate', agentId: 'agent', stepId: 'one' }, [
+      generated,
+    ]);
+    const second = attachment({ toolCallId: 'play', agentId: 'agent', stepId: 'two' }, [
+      { ...generated, toolName: 'play_video' },
+    ]);
+    const config = {
+      ...enabledConfig,
+      mcpApps: {
+        ...enabledConfig.mcpApps!,
+        inlineVideoServers: ['video-generation'],
+      },
+    };
+    const renderApps = (attachments: TAttachment[]) => (
+      <MCPAppsPolicyProvider startupConfig={config} ready userId="user-1">
+        <MCPAppViews attachments={attachments} />
+      </MCPAppsPolicyProvider>
+    );
+    const view = render(renderApps([first]));
+    const frame = view.container.querySelector('iframe');
+    expect(frame).not.toBeNull();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByText('generate_video')).not.toBeInTheDocument();
+    view.rerender(renderApps([first, second]));
+    expect(view.container.querySelectorAll('iframe')).toHaveLength(1);
+    expect(view.container.querySelector('iframe')).toBe(frame);
+    expect(view.container.querySelectorAll('[data-inline-video]')).toHaveLength(1);
+  });
+
+  it('keeps failed tool results manual and does not merge different video jobs', () => {
+    const videos = [1, 2, 3].map((index) => {
+      const videoId = `00000000-0000-4000-8000-00000000000${index}`;
+      return attachment({ toolCallId: String(index), agentId: 'agent', stepId: String(index) }, [
+        app({
+          serverName: 'video-generation',
+          toolName: 'generate_video',
+          isError: index === 3,
+          structuredContent: {
+            videoId,
+            videoUri: `videos://${videoId}`,
+            statusUri: `video-jobs://${videoId}`,
+          },
+        }),
+      ]);
+    });
+    const config = {
+      ...enabledConfig,
+      mcpApps: {
+        ...enabledConfig.mcpApps!,
+        inlineVideoServers: ['video-generation'],
+      },
+    };
+    const view = render(
+      <MCPAppsPolicyProvider startupConfig={config} ready userId="user-1">
+        <MCPAppViews attachments={videos} />
+      </MCPAppsPolicyProvider>,
+    );
+    expect(view.container.querySelectorAll('[data-inline-video]')).toHaveLength(2);
+    expect(view.container.querySelectorAll('iframe')).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: /com_ui_mcp_app_open_named/ })).toHaveLength(1);
+  });
+
+  it('respects the shared capacity and automatically admits the next video after release', () => {
+    const config = {
+      ...enabledConfig,
+      mcpApps: {
+        ...enabledConfig.mcpApps!,
+        maxActiveViews: 1,
+        inlineVideoServers: ['video-generation'],
+      },
+    };
+    const videos = [1, 2].map((index) => {
+      const videoId = `00000000-0000-4000-8000-00000000000${index}`;
+      return attachment({ toolCallId: String(index), agentId: 'agent', stepId: String(index) }, [
+        app({
+          serverName: 'video-generation',
+          toolName: 'generate_video',
+          structuredContent: {
+            videoId,
+            videoUri: `videos://${videoId}`,
+            statusUri: `video-jobs://${videoId}`,
+          },
+        }),
+      ]);
+    });
+    const renderApps = (attachments: TAttachment[]) => (
+      <MCPAppsPolicyProvider startupConfig={config} ready userId="user-1">
+        <MCPAppViews attachments={attachments} />
+      </MCPAppsPolicyProvider>
+    );
+    const view = render(renderApps(videos));
+    expect(view.container.querySelectorAll('iframe')).toHaveLength(1);
+    expect(screen.getByRole('alert')).toHaveTextContent('com_ui_mcp_app_at_capacity');
+    view.rerender(renderApps(videos.slice(1)));
+    expect(view.container.querySelectorAll('iframe')).toHaveLength(1);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(mockUseAppBridge.mock.calls.at(-1)?.[0].resource.structuredContent?.videoId).toBe(
+      '00000000-0000-4000-8000-000000000002',
+    );
+  });
+
   it('does not create frame or bridge hooks without both policy and host identity', () => {
     const attachments = [
       attachment({ toolCallId: 'call-1', agentId: 'agent-1', stepId: 'step-1' }, [

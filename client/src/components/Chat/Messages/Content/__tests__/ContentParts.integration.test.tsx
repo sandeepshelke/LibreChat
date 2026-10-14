@@ -3,6 +3,8 @@ import { RecoilRoot } from 'recoil';
 import { Constants, ContentTypes, Tools } from 'librechat-data-provider';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type { EventSubmission, TAttachment, TMessageContentParts } from 'librechat-data-provider';
+import type { TStartupConfig } from 'librechat-data-provider';
+import { MCPAppsPolicyProvider } from '~/Providers/MCPAppsPolicyContext';
 import useAttachmentHandler from '~/hooks/SSE/useAttachmentHandler';
 import useAttachments from '~/hooks/Messages/useAttachments';
 import { ParallelColumns } from '../ParallelContent';
@@ -348,6 +350,63 @@ describe('ContentParts integration: adjacent prose identity', () => {
 });
 
 describe('ContentParts integration: MCP image hoist and grouping', () => {
+  it.each([false, true])(
+    'replaces a video-only response with its App (opted in: %s)',
+    (enabled) => {
+      const videoId = '00000000-0000-4000-8000-000000000001';
+      const attachments: TAttachment[] = ['generate', 'play'].map((id) => ({
+        type: Tools.ui_resources,
+        toolCallId: id,
+        messageId: 'm1',
+        conversationId: 'c1',
+        ui_resources: [
+          {
+            uri: 'ui://video-player/mcp-app.html',
+            mimeType: 'text/html;profile=mcp-app',
+            resourceId: id,
+            serverName: 'video-generation',
+            toolName: `${id}_video`,
+            structuredContent: {
+              videoId,
+              videoUri: `videos://${videoId}`,
+              statusUri: `video-jobs://${videoId}`,
+            },
+          },
+        ],
+      }));
+      const config = {
+        mcpApps: {
+          enabled: true,
+          legacyHtmlEnabled: true,
+          inlineVideoServers: enabled ? ['video-generation'] : [],
+        },
+      } as TStartupConfig;
+      render(
+        <RecoilRoot>
+          <MCPAppsPolicyProvider startupConfig={config} ready userId="user-1">
+            <ContentParts
+              {...baseProps}
+              attachments={attachments}
+              content={[
+                makeMcpToolCall('generate'),
+                makeMcpToolCall('play'),
+                makeTextPart('Video URI and tool narration'),
+              ]}
+            />
+          </MCPAppsPolicyProvider>
+        </RecoilRoot>,
+      );
+      expect(screen.getAllByTestId('mcp-app-attachments')).toHaveLength(1);
+      if (enabled) {
+        expect(screen.queryByTestId('tool-call-info')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('text')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('stacked-icons')).not.toBeInTheDocument();
+      } else {
+        expect(screen.getByText('Video URI and tool narration')).toBeInTheDocument();
+      }
+    },
+  );
+
   const baseProps = {
     messageId: 'msg1',
     isCreatedByUser: false,

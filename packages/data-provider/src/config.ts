@@ -3088,6 +3088,8 @@ export type TMCPAppsPolicy = {
   operationLimits?: TMCPAppOperationLimits;
   /** Deployment-owned dedicated Sandbox Proxy URL published to authenticated clients. */
   sandboxUrl?: string;
+  /** Trusted video-job servers whose Apps replace tool chrome with inline playback. */
+  inlineVideoServers?: string[];
 };
 
 /** Aggregate App-bearing message target; cannot exceed the safe storage ceiling. */
@@ -3119,6 +3121,7 @@ export function resolveMCPAppsPolicy(
   maxActiveViews = DEFAULT_MCP_APP_MAX_ACTIVE_VIEWS,
   maxActionPreviewChars = DEFAULT_MCP_APP_ACTION_PREVIEW_CHARS,
   operationLimits?: Partial<TMCPAppOperationLimits>,
+  inlineVideoServers?: string[],
 ): TMCPAppsPolicy {
   return {
     enabled: value === true,
@@ -3132,6 +3135,7 @@ export function resolveMCPAppsPolicy(
       ? { operationLimits: resolveMCPAppOperationLimits(operationLimits) }
       : {}),
     ...(sandboxUrl !== undefined ? { sandboxUrl } : {}),
+    ...(inlineVideoServers !== undefined ? { inlineVideoServers } : {}),
   };
 }
 
@@ -3889,6 +3893,7 @@ export const configSchema = z.object({
   mcpServers: MCPServersSchema.optional(),
   mcpAppSandbox: z
     .object({
+      inlineVideoServers: z.array(z.string().trim().min(1)).optional(),
       url: z
         .string()
         .trim()

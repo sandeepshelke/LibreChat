@@ -14,6 +14,7 @@ import { selectToolCallUIResources, getInlineResourceHtml } from '~/utils/mcpApp
 import { useIsMessagesViewReadOnly } from '~/Providers/MessagesViewContext';
 import { MCPAppApproval, useMCPAppApproval } from '~/hooks/MCP/approval';
 import { useAppBridge, useMCPAppFrame } from '~/hooks/MCP';
+import { getInlineVideoKey } from '~/utils/inlineVideo';
 import { MCPAppFrame } from './MCPAppFrame';
 import { useLocalize } from '~/hooks';
 
@@ -40,6 +41,9 @@ function ActiveMCPAppView({
   closeButtonRef,
   openButtonRef,
   ordinal,
+  inline = false,
+  viewRef,
+  onHeightChange,
 }: {
   app: UIResource;
   userId: string;
@@ -47,6 +51,9 @@ function ActiveMCPAppView({
   closeButtonRef: React.RefObject<HTMLButtonElement>;
   openButtonRef: React.RefObject<HTMLButtonElement>;
   ordinal: number;
+  inline?: boolean;
+  viewRef?: React.RefObject<HTMLDivElement>;
+  onHeightChange?: (height: number) => void;
 }) {
   const localize = useLocalize();
   const approval = useMCPAppApproval();
@@ -54,6 +61,7 @@ function ActiveMCPAppView({
     defaultHeight: DEFAULT_APP_VIEW_HEIGHT,
     toolArgs: app.toolArgs,
   });
+  useLayoutEffect(() => onHeightChange?.(frame.height), [frame.height, onHeightChange]);
   useAppBridge({
     iframeRef: frame.iframeRef,
     resource: app,
@@ -70,7 +78,9 @@ function ActiveMCPAppView({
       // A peer can tear down while the user is in its frame or approval dialog. Restore
       // their place without stealing focus if they have already moved elsewhere.
       const focusedInView =
-        closeButtonRef.current?.parentElement?.contains(document.activeElement) ?? false;
+        (viewRef?.current ?? closeButtonRef.current?.parentElement)?.contains(
+          document.activeElement,
+        ) ?? false;
       const focusedInApproval =
         approval.pending !== null &&
         document.activeElement?.closest('[role="alertdialog"]') != null;
@@ -89,23 +99,36 @@ function ActiveMCPAppView({
     );
   } else if (frame.status !== 'tornDown') {
     body = (
-      <div className="relative my-2 overflow-hidden" style={{ height: frame.height }}>
-        <MCPAppFrame frame={frame} resource={app} spinner />
+      <div
+        className={inline ? 'relative overflow-hidden' : 'relative my-2 overflow-hidden'}
+        style={{ height: frame.height }}
+      >
+        <MCPAppFrame
+          frame={frame}
+          resource={app}
+          title={inline ? localize('com_ui_inline_video') : undefined}
+          spinner
+        />
       </div>
     );
   }
   return (
     <>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        ref={closeButtonRef}
-        onClick={() => close()}
-        aria-label={localize('com_ui_mcp_app_close_named', { 0: app.toolName, 1: String(ordinal) })}
-      >
-        {localize('com_ui_mcp_app_close')}
-      </Button>
+      {!inline && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          ref={closeButtonRef}
+          onClick={() => close()}
+          aria-label={localize('com_ui_mcp_app_close_named', {
+            0: app.toolName,
+            1: String(ordinal),
+          })}
+        >
+          {localize('com_ui_mcp_app_close')}
+        </Button>
+      )}
       {body}
       <MCPAppApproval
         action={approval.pending}
@@ -118,10 +141,98 @@ function ActiveMCPAppView({
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           // The dialog has no persistent trigger. Return focus to the host View control.
-          (openButtonRef.current ?? closeButtonRef.current)?.focus();
+          (openButtonRef.current ?? closeButtonRef.current ?? viewRef?.current)?.focus();
         }}
       />
     </>
+  );
+}
+
+function InlineVideoView({ app, userId }: { app: UIResource; userId: string }) {
+  const localize = useLocalize();
+  const { reserveView, releaseView } = useMCPAppsHost();
+  const atCapacity = useMCPAppViewAtCapacity();
+  const readOnly = useIsMessagesViewReadOnly();
+  // Saved jobs use the current player, while shared transcripts retain their inert snapshot.
+  const player = useMemo(
+    () => (readOnly ? app : { ...app, text: undefined, blob: undefined }),
+    [app, readOnly],
+  );
+  const unavailable = readOnly && !getInlineResourceHtml(app);
+  const viewKey = useId();
+  const viewRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [visible, setVisible] = useState(typeof IntersectionObserver === 'undefined');
+  const [opened, setOpened] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const [height, setHeight] = useState(DEFAULT_APP_VIEW_HEIGHT);
+
+  useEffect(() => {
+    if (!viewRef.current || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting));
+    observer.observe(viewRef.current);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!visible || unavailable) {
+      releaseView(viewKey);
+      setOpened(false);
+    } else if (!opened && !dismissed && reserveView(viewKey)) {
+      setOpened(true);
+    }
+  }, [visible, unavailable, opened, dismissed, atCapacity, reserveView, releaseView, viewKey]);
+  useEffect(() => () => releaseView(viewKey), [releaseView, viewKey]);
+  const close = useCallback(
+    (restoreFocus = false) => {
+      setDismissed(true);
+      setOpened(false);
+      releaseView(viewKey);
+      if (restoreFocus) viewRef.current?.focus();
+    },
+    [releaseView, viewKey],
+  );
+
+  let placeholder: React.ReactNode = <span role="status">{localize('com_ui_loading_video')}</span>;
+  if (unavailable) {
+    placeholder = localize('com_ui_mcp_app_shared_unavailable');
+  } else if (dismissed) {
+    placeholder = (
+      <Button ref={buttonRef} onClick={() => setDismissed(false)}>
+        {localize('com_ui_load_video')}
+      </Button>
+    );
+  } else if (atCapacity && visible) {
+    placeholder = <CapacityNotice />;
+  }
+  return (
+    <div
+      ref={viewRef}
+      tabIndex={-1}
+      className="my-2"
+      data-inline-video
+      aria-label={localize('com_ui_inline_video')}
+    >
+      {opened ? (
+        <ActiveMCPAppView
+          app={player}
+          userId={userId}
+          close={close}
+          closeButtonRef={buttonRef}
+          openButtonRef={buttonRef}
+          viewRef={viewRef}
+          onHeightChange={setHeight}
+          ordinal={1}
+          inline
+        />
+      ) : (
+        <div
+          style={{ height }}
+          className="text-text-secondary flex items-center justify-center text-sm"
+        >
+          {placeholder}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -239,7 +350,15 @@ export function MCPAppViews({ attachments }: { attachments?: TAttachment[] }) {
         : attachments?.filter((attachment) => !suppressedAttachments.has(attachment)),
     [attachments, suppressedAttachments],
   );
-  const apps = useMemo(() => selectToolCallUIResources(visibleAttachments), [visibleAttachments]);
+  const apps = useMemo(() => {
+    const seen = new Set<string>();
+    return selectToolCallUIResources(visibleAttachments).flatMap((occurrence) => {
+      const videoKey = getInlineVideoKey(occurrence.resource, policy.inlineVideoServers);
+      if (videoKey && seen.has(videoKey)) return [];
+      if (videoKey) seen.add(videoKey);
+      return [{ ...occurrence, key: videoKey ?? occurrence.key, inline: !!videoKey }];
+    });
+  }, [visibleAttachments, policy.inlineVideoServers]);
 
   if (!policy.enabled || !userId || apps.length === 0) {
     return null;
@@ -247,14 +366,18 @@ export function MCPAppViews({ attachments }: { attachments?: TAttachment[] }) {
 
   return (
     <>
-      {apps.map(({ key, resource }, index) => (
-        <MCPAppView
-          key={JSON.stringify([userId, key])}
-          app={resource}
-          userId={userId}
-          ordinal={index + 1}
-        />
-      ))}
+      {apps.map(({ key, resource, inline }, index) =>
+        inline ? (
+          <InlineVideoView key={JSON.stringify([userId, key])} app={resource} userId={userId} />
+        ) : (
+          <MCPAppView
+            key={JSON.stringify([userId, key])}
+            app={resource}
+            userId={userId}
+            ordinal={index + 1}
+          />
+        ),
+      )}
     </>
   );
 }

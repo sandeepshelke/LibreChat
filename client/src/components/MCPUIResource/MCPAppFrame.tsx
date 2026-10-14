@@ -17,11 +17,13 @@ export function MCPAppFrame({
   resource,
   centered = false,
   spinner = false,
+  title,
 }: {
   frame: MCPAppFrameState;
   resource: UIResource;
   centered?: boolean;
   spinner?: boolean;
+  title?: string;
 }) {
   const localize = useLocalize();
   const overlayClass = centered ? `${OVERLAY_CLASS} justify-center` : OVERLAY_CLASS;
@@ -62,7 +64,7 @@ export function MCPAppFrame({
           className={
             frame.status === 'ready' ? 'visible size-full border-0' : 'invisible size-full border-0'
           }
-          title={localize('com_ui_mcp_app_frame_title', { 0: resource.toolName ?? '' })}
+          title={title ?? localize('com_ui_mcp_app_frame_title', { 0: resource.toolName ?? '' })}
         />
       )}
     </>

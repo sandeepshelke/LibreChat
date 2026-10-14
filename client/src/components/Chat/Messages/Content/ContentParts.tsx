@@ -38,6 +38,9 @@ import { isPreviewedToolCallPart, PreviewedToolCallPart } from './hydration';
 import { MediaContext, MessageContext, SearchContext } from '~/Providers';
 import MemoryArtifacts, { hasMemoryArtifacts } from './MemoryArtifacts';
 import { hasParallelLanes, parallelLaneGroups } from '~/utils/lanes';
+import { useMCPAppsHost } from '~/Providers/MCPAppsPolicyContext';
+import { selectToolCallUIResources } from '~/utils/mcpApps';
+import { getInlineVideoKey } from '~/utils/inlineVideo';
 import PendingSkillCall from './Parts/PendingSkillCall';
 import ActivityPhaseGroup from './ActivityPhaseGroup';
 import { hasPendingApprovalInPart } from '~/utils';
@@ -1330,6 +1333,50 @@ const ContentParts = memo(function ContentParts(props: ContentPartsProps) {
     () => collectMessageAppAttachments(props.content, attachments),
     [props.content, attachments],
   );
+  const { policy: appsPolicy, userId: appsUserId } = useMCPAppsHost();
+  const videoPresentation = useMemo(() => {
+    const unchanged = { content: props.content, videoOnly: false };
+    if (
+      isCreatedByUser ||
+      props.edit ||
+      !appsPolicy.enabled ||
+      !appsUserId ||
+      !appsPolicy.inlineVideoServers?.length
+    )
+      return unchanged;
+    const attachmentMap = mapAttachments(attachments ?? []);
+    const owners = buildToolCallStepOwners(props.content);
+    let hidden = 0;
+    const content = props.content?.map((part) => {
+      if (!part || part.type !== ContentTypes.TOOL_CALL || hasPendingApprovalInPart(part))
+        return part;
+      const routed = filterAttachmentsForPart(
+        attachmentMap[getToolCallId(part)],
+        getPartAgentId(part),
+        getPartStepId(part),
+        getSiblingStepIds(part, owners),
+      );
+      const resources = selectToolCallUIResources(routed);
+      if (
+        !resources.length ||
+        routed?.some((attachment) => attachment.type !== Tools.ui_resources) ||
+        !resources.every(({ resource }) =>
+          getInlineVideoKey(resource, appsPolicy.inlineVideoServers),
+        )
+      )
+        return part;
+      hidden++;
+      return undefined;
+    });
+    if (!hidden) return unchanged;
+    const videoOnly =
+      content?.every(
+        (part) =>
+          part == null || part.type === ContentTypes.TEXT || part.type === ContentTypes.THINK,
+      ) === true &&
+      attachments?.every((attachment) => attachment.type === Tools.ui_resources) === true;
+    return { content, videoOnly };
+  }, [props.content, props.edit, attachments, isCreatedByUser, appsPolicy, appsUserId]);
   const suppressedAppAttachments = useMemo<ReadonlySet<TAttachment>>(
     () => new Set(messageAppAttachments),
     [messageAppAttachments],
@@ -1397,7 +1444,9 @@ const ContentParts = memo(function ContentParts(props: ContentPartsProps) {
             <MCPAppSuppressionContext.Provider value={suppressedAppAttachments}>
               {/* A nested message (a subagent's) is not the sole call of the group around it. */}
               <SoleToolContext.Provider value={undefined}>
-                <ContentPartsBody {...props} />
+                {!videoPresentation.videoOnly && (
+                  <ContentPartsBody {...props} content={videoPresentation.content} />
+                )}
               </SoleToolContext.Provider>
             </MCPAppSuppressionContext.Provider>
             <MCPAppViews
